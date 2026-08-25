@@ -1,0 +1,74 @@
+[
+  {
+    "id": "deno",
+    "title": "Deno",
+    "requires": "deno",
+    "command": ["deno", "--version"],
+    "currentPattern": "deno (?<current>[0-9][0-9A-Za-z.+-]*)",
+    "latestFrom": { "github": "denoland/deno" },
+    "upgrade": "deno upgrade",
+    "infoURL": "https://github.com/denoland/deno/releases"
+  },
+
+  {
+    "id": "bun",
+    "title": "Bun",
+    "requires": "bun",
+    "command": ["bun", "--version"],
+    "currentPattern": "(?<current>[0-9]+\\.[0-9]+\\.[0-9]+)",
+    "latestFrom": { "github": "oven-sh/bun" },
+    "upgrade": "bun upgrade",
+    "infoURL": "https://github.com/oven-sh/bun/releases"
+  },
+
+  {
+    "id": "pkgx",
+    "title": "pkgx",
+    "requires": "pkgx",
+    "command": ["pkgx", "--version"],
+    "currentPattern": "pkgx (?<current>[0-9][0-9A-Za-z.+-]*)",
+    "latestFrom": { "github": "pkgxdev/pkgx" },
+    "upgrade": "pkgx self-update",
+    "infoURL": "https://github.com/pkgxdev/pkgx/releases"
+  },
+
+  {
+    "id": "nix",
+    "title": "Nix",
+    "requires": "nix",
+    "command": ["nix", "--version"],
+    "currentPattern": "nix \\(Nix\\) (?<current>[0-9][0-9A-Za-z.+-]*)",
+    "latestFrom": { "github": "NixOS/nix" },
+    "upgrade": "nix upgrade-nix",
+    "infoURL": "https://github.com/NixOS/nix/releases"
+  },
+
+  {
+    "id": "gh",
+    "title": "GitHub CLI",
+    "requires": "gh",
+    "command": ["gh", "--version"],
+    "currentPattern": "gh version (?<current>[0-9][0-9A-Za-z.+-]*)",
+    "latestFrom": { "github": "cli/cli" },
+    "upgrade": "brew upgrade gh",
+    "infoURL": "https://github.com/cli/cli/releases"
+  },
+
+  {
+    "id": "krew",
+    "title": "kubectl plugins",
+    "requires": "kubectl-krew",
+    "command": ["kubectl-krew", "upgrade", "--dry-run"],
+    "rowPattern": "^Upgrading plugin: (?<name>\\S+)\\s+.*?(?<current>v?[0-9][0-9A-Za-z.+-]*)\\s*->\\s*(?<latest>v?[0-9][0-9A-Za-z.+-]*)",
+    "upgrade": "kubectl krew upgrade {name}"
+  },
+
+  {
+    "id": "helm",
+    "title": "Helm releases",
+    "requires": "helm",
+    "command": ["helm", "list", "--all-namespaces", "--output", "json"],
+    "rowPattern": "\"name\":\"(?<name>[^\"]+)\".*?\"chart\":\"[^\"]*?-(?<current>[0-9][0-9A-Za-z.+-]*)\".*?\"app_version\":\"(?<latest>[^\"]*)\"",
+    "upgrade": "helm upgrade {name} --reuse-values"
+  }
+]
