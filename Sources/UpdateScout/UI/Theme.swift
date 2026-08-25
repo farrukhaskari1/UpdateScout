@@ -39,6 +39,7 @@ enum Theme {
 
     enum Radius {
         static let control: CGFloat = 6
+        static let card: CGFloat = 10
     }
 
     /// Height of a row's leading icon. Section chevrons and the header badge

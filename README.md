@@ -19,8 +19,11 @@ command or release page, but never installs anything itself.
 ## Interface
 
 ```
-14 updates                  ⌕  ⟳  ⚙
-5 apps · 9 tools · checked 2m ago
+UpdateScout                         ⌕  ⟳  ⚙
+┌───────────────────────────────────────────┐
+│ ↓  14 updates available                  │
+│    5 apps · 9 tools · checked 2m ago     │
+└───────────────────────────────────────────┘
 ─────────────────────────────────────────────
  MACOS SYSTEM                            1
  ● macOS Sequoia          15.5 → 15.6
@@ -214,6 +217,7 @@ Sources/UpdateScout/
   UI/
     Theme.swift               spacing grid, type scale, shared colours
     MenuView.swift            the panel
+    MenuHeader.swift          toolbar, status card, transient search
     SourceSectionHeader.swift always-visible source headings
     UpdateRow.swift           one row
     AppIconLoader.swift       Finder icons, cached
