@@ -12,6 +12,9 @@ final class UpdateStore: ObservableObject {
     @Published private(set) var isScanning = false
     @Published private(set) var progressLabel: String = ""
     @Published private(set) var hasCompletedScanThisLaunch = false
+    @Published private(set) var updateStates: [String: UpdateExecutionState] = [:]
+    @Published private(set) var isUpdating = false
+    @Published private(set) var updateProgressLabel = ""
     @Published var lastScan: Date?
 
     /// Sources the user can toggle, and whether the backing tool exists.
@@ -20,6 +23,7 @@ final class UpdateStore: ObservableObject {
 
     private var timer: Timer?
     private var scanTask: Task<Void, Never>?
+    private var updateTask: Task<Void, Never>?
     private var previouslySeen: Set<String> = []
     /// Kept so a settings change can re-filter without a fresh scan.
     private var lastResult = ScanResult()
@@ -145,8 +149,9 @@ final class UpdateStore: ObservableObject {
     }
 
     func refresh() {
-        guard !isScanning else { return }
+        guard !isScanning, !isUpdating else { return }
         scanTask?.cancel()
+        updateStates = [:]
         isScanning = true
         progressLabel = "Preparing sources"
 
@@ -291,8 +296,84 @@ final class UpdateStore: ObservableObject {
 
     // MARK: - Actions
 
-    func runUpdatesInTerminal(_ items: [UpdateItem]) throws {
-        try TerminalUpdateScript.run(items: items)
+    func updateState(for item: UpdateItem) -> UpdateExecutionState {
+        guard let command = item.upgradeCommand else { return .idle }
+        return updateStates[command] ?? .idle
+    }
+
+    func canRunUpdate(_ item: UpdateItem) -> Bool {
+        item.upgradeCommand != nil && updateState(for: item).canRun
+    }
+
+    func startUpdates(_ requestedItems: [UpdateItem]) {
+        guard !isUpdating, !isScanning else { return }
+        var seen = Set<String>()
+        let runnable = requestedItems.filter { item in
+            guard let command = item.upgradeCommand,
+                  updateState(for: item).canRun
+            else { return false }
+            return seen.insert(command).inserted
+        }
+        guard !runnable.isEmpty else { return }
+
+        isUpdating = true
+        for item in runnable {
+            if let command = item.upgradeCommand { updateStates[command] = .queued }
+        }
+        updateTask = Task { [weak self] in
+            await self?.performUpdates(runnable)
+        }
+    }
+
+    func cancelUpdates() {
+        updateTask?.cancel()
+    }
+
+    private func performUpdates(_ runnable: [UpdateItem]) async {
+        for (index, item) in runnable.enumerated() {
+            guard !Task.isCancelled, let command = item.upgradeCommand else { break }
+            updateStates[command] = .running
+            updateProgressLabel = "\(index + 1) of \(runnable.count) · \(item.name)"
+
+            let mayElevate = item.source == .macOSSystem || item.source == .macports
+            let result = await Shell.runUpdateCommand(
+                command,
+                allowAdministratorPrivileges: mayElevate
+            )
+            if Task.isCancelled { break }
+
+            guard let result else {
+                updateStates[command] = .failed("The command could not be started. Copy it and run it manually.")
+                continue
+            }
+            if result.ok {
+                updateStates[command] = .succeeded
+            } else if Shell.isPermissionFailure(result) {
+                updateStates[command] = .permissionRequired(
+                    "Permission wasn’t granted. Copy the command to run it manually."
+                )
+            } else {
+                updateStates[command] = .failed(Shell.conciseError(from: result))
+            }
+        }
+
+        if Task.isCancelled {
+            for (command, state) in updateStates {
+                switch state {
+                case .queued:
+                    updateStates[command] = .idle
+                case .running:
+                    updateStates[command] = .stopped(
+                        "Stopped. It may still be finishing; refresh before retrying."
+                    )
+                default:
+                    break
+                }
+            }
+        }
+        isUpdating = false
+        updateProgressLabel = ""
+        updateTask = nil
     }
 
     func copyCommand(for item: UpdateItem) {

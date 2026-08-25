@@ -5,6 +5,8 @@ import AppKit
 @MainActor
 struct UpdateRow: View {
     let item: UpdateItem
+    let executionState: UpdateExecutionState
+    let updatesDisabled: Bool
     let justCopied: Bool
     let onUpdate: () -> Void
     let onCopy: () -> Void
@@ -26,6 +28,13 @@ struct UpdateRow: View {
                             .truncationMode(.middle)
 
                         versionLine
+
+                        if let detail = executionState.detail {
+                            Text(detail)
+                                .font(Theme.Font.caption)
+                                .foregroundStyle(executionState.isPermissionRequired ? .orange : .red)
+                                .lineLimit(2)
+                        }
                     }
 
                     Spacer(minLength: Theme.Space.inner)
@@ -36,6 +45,7 @@ struct UpdateRow: View {
             .accessibilityLabel(item.name)
             .accessibilityValue(item.versionSummary)
             .accessibilityHint(helpText)
+            .disabled(updatesDisabled && item.upgradeCommand != nil)
 
             trailing
                 .animation(.easeInOut(duration: 0.12), value: hovering)
@@ -104,10 +114,7 @@ struct UpdateRow: View {
             }
 
             if item.upgradeCommand != nil {
-                Button("Update", action: onUpdate)
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .help("Update \(item.name) in Terminal")
+                executionButton
             } else if item.infoURL != nil {
                 Button("Open", action: onOpen)
                     .buttonStyle(.bordered)
@@ -118,9 +125,52 @@ struct UpdateRow: View {
     }
 
     @ViewBuilder
+    private var executionButton: some View {
+        Group {
+            switch executionState {
+            case .idle:
+                Button("Update", action: onUpdate)
+                    .disabled(updatesDisabled)
+                    .help("Run the update inside UpdateScout")
+            case .queued:
+                Button("Queued", action: {})
+                    .disabled(true)
+            case .running:
+                Button(action: {}) {
+                    HStack(spacing: Theme.Space.tight) {
+                        ProgressView().controlSize(.mini)
+                        Text("Updating")
+                    }
+                }
+                .disabled(true)
+            case .succeeded:
+                Button("Updated", systemImage: "checkmark", action: {})
+                    .disabled(true)
+            case .permissionRequired:
+                Button(
+                    justCopied ? "Copied" : "Copy Command",
+                    systemImage: justCopied ? "checkmark" : "doc.on.doc",
+                    action: onCopy
+                )
+                .help("Copy the command to run it manually")
+            case .failed:
+                Button("Retry", systemImage: "arrow.clockwise", action: onUpdate)
+                    .disabled(updatesDisabled)
+                    .help("Try this update again")
+            case .stopped:
+                Button("Stopped", systemImage: "stop.fill", action: {})
+                    .disabled(true)
+                    .help("Refresh before retrying this update")
+            }
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+    }
+
+    @ViewBuilder
     private var rowMenu: some View {
         if let command = item.upgradeCommand {
-            Button("Update in Terminal") { onUpdate() }
+            Button("Run Update") { onUpdate() }
             Divider()
             Button("Copy “\(command)”") { onCopy() }
         }
@@ -139,7 +189,7 @@ struct UpdateRow: View {
     }
 
     private var helpText: String {
-        if item.upgradeCommand != nil { return "Update \(item.name) in Terminal" }
+        if item.upgradeCommand != nil { return "Run the \(item.name) update inside UpdateScout" }
         return "Open the download page for \(item.name)"
     }
 

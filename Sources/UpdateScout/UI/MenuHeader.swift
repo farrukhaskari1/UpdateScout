@@ -75,6 +75,7 @@ struct MenuHeader: View {
                         help: "Check for updates now",
                         action: store.refresh
                     )
+                    .disabled(store.isUpdating)
                 }
 
                 IconButton(
@@ -117,7 +118,7 @@ struct MenuHeader: View {
             .fill(statusTint.opacity(0.14))
             .frame(width: 28, height: 28)
             .overlay {
-                if store.isScanning {
+                if store.isScanning || store.isUpdating {
                     ProgressView()
                         .controlSize(.mini)
                         .tint(statusTint)
@@ -152,6 +153,7 @@ struct MenuHeader: View {
     }
 
     private var headline: String {
+        if store.isUpdating { return "Updating your Mac" }
         if store.isScanning { return "Checking your Mac" }
         if !store.items.isEmpty {
             return store.items.count == 1 ? "1 update available" : "\(store.items.count) updates available"
@@ -162,6 +164,7 @@ struct MenuHeader: View {
     }
 
     private var subhead: String {
+        if store.isUpdating, !store.updateProgressLabel.isEmpty { return store.updateProgressLabel }
         if store.isScanning, !store.progressLabel.isEmpty { return store.progressLabel }
 
         var pieces: [String] = []
@@ -180,7 +183,7 @@ struct MenuHeader: View {
     }
 
     private var statusTint: Color {
-        if store.isScanning { return .accentColor }
+        if store.isScanning || store.isUpdating { return .accentColor }
         if store.hasFailures { return .orange }
         if !store.hasCompletedScanThisLaunch { return .secondary }
         return store.items.isEmpty ? .green : .accentColor

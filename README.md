@@ -2,7 +2,7 @@
 
 A local-first macOS menu bar app that finds and launches updates for native apps
 and developer tools in one place. Every command-based update is confirmed first
-and then runs visibly in Terminal.
+and then runs inside the app.
 
 > **Project status:** Source release. Build locally on macOS 13 or later. Signed
 > public binaries are planned but are not available yet.
@@ -14,8 +14,8 @@ and then runs visibly in Terminal.
   package managers, runtime managers, and more.
 - Extensible JSON-defined sources without recompiling the app.
 - Local-first operation with no account, analytics, or central inventory server.
-- Explicit by design: updates run only after confirmation, in a visible Terminal
-  window where you can inspect progress, errors, and password prompts.
+- Explicit by design: updates run only after confirmation, with visible progress
+  and results. If permission is declined, the command remains available to copy.
 
 ## Interface
 
@@ -41,7 +41,7 @@ UpdateScout                         ⌕  ⟳  ⚙
  Update All   ⧉                         Quit
 ```
 
-Click **Update** on a row to review and run its command in Terminal, or use
+Click **Update** on a row to review and run its command inside UpdateScout, or use
 **Update All** to run every available command in sequence. Apps without a safe
 command show **Open** instead, taking you to their normal download page. Copying
 commands and opening release notes remain available as secondary actions.
@@ -171,10 +171,13 @@ preferences. Keep tokens out of config files, screenshots, logs, issues, and
 pull requests.
 
 The app executes an upgrade command only after you click **Update** or
-**Update All** and confirm the prompt. Commands run in a new Terminal window,
-not as hidden background processes, so you can review progress, errors, and any
-password request. Custom-source upgrade templates are user-controlled shell
-commands and should be reviewed before use.
+**Update All** and confirm the prompt. Progress and results remain visible in
+the app. Commands that require administrator rights use the standard macOS
+authorization prompt; if permission is declined, UpdateScout shows a **Copy
+Command** fallback. Elevation is limited to UpdateScout's built-in macOS and
+MacPorts commands; privileged custom-source commands are never elevated and are
+offered for copying instead. Custom-source upgrade templates are user-controlled
+shell commands and should be reviewed before use.
 
 To report a vulnerability, follow [SECURITY.md](SECURITY.md). Please do not put
 sensitive security details in a public issue.
@@ -186,7 +189,7 @@ sensitive security details in a public issue.
 - **Dot colour** marks the size of the jump: orange for a major version, blue for minor, grey for a patch.
 - **Right-click any app row** to stop reporting it — useful for one that misreports its version or that you keep deliberately pinned. Ignored bundle IDs are stored in `UserDefaults`.
 - **The refresh button becomes a stop button** mid-scan. Cancelling terminates active provider subprocesses and stops their network tasks.
-- **Confirms before updating.** Commands never run from a scan or background timer. They run only after an Update confirmation, visibly in Terminal; tools such as `sudo softwareupdate` may ask for your password there.
+- **Confirms before updating.** Commands never run from a scan or background timer. They run only after an Update confirmation. Tools such as `sudo softwareupdate` may trigger the standard macOS administrator prompt; declining it leaves a Copy Command fallback.
 
 ## Things worth knowing
 

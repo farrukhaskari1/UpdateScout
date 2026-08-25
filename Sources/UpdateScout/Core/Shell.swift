@@ -96,6 +96,93 @@ enum Shell {
             .replacingOccurrences(of: placeholder, with: quoted)
     }
 
+    static func requiresAdministratorPrivileges(_ command: String) -> Bool {
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed == "sudo" || trimmed.hasPrefix("sudo ")
+    }
+
+    static func isPermissionFailure(_ result: CommandResult) -> Bool {
+        let message = (result.stderr + "\n" + result.stdout).lowercased()
+        return [
+            "permission denied", "operation not permitted", "not authorized",
+            "authorization denied", "user canceled", "must be root",
+            "requires root", "password is required", "no tty present"
+        ].contains { message.contains($0) }
+    }
+
+    /// Run one confirmed update. Ordinary commands stay under the current user;
+    /// a leading `sudo` is replaced by the standard macOS administrator prompt.
+    static func runUpdateCommand(
+        _ command: String,
+        allowAdministratorPrivileges: Bool = false,
+        timeout: TimeInterval = 30 * 60
+    ) async -> CommandResult? {
+        if requiresAdministratorPrivileges(command) {
+            guard allowAdministratorPrivileges,
+                  let privilegedCommand = trustedPrivilegedCommand(command)
+            else {
+                return CommandResult(
+                    stdout: "",
+                    stderr: "Authorization denied: administrator execution is not available for this update source.",
+                    exitCode: 77
+                )
+            }
+            return await runRawAsync(
+                executable: "/usr/bin/osascript",
+                arguments: [
+                    "-e", "on run argv",
+                    "-e", "do shell script (item 1 of argv) with administrator privileges",
+                    "-e", "end run",
+                    "--", privilegedCommand
+                ],
+                timeout: timeout
+            )
+        }
+
+        return await runRawAsync(
+            executable: "/bin/zsh",
+            arguments: ["-lc", command],
+            timeout: timeout
+        )
+    }
+
+    /// Only built-in providers with known root-owned executables may elevate.
+    /// Custom commands still get the Copy Command fallback.
+    static func trustedPrivilegedCommand(_ command: String) -> String? {
+        let stripped = command
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .dropFirst("sudo".count)
+            .trimmingCharacters(in: .whitespaces)
+        let executables = [
+            "softwareupdate": "/usr/sbin/softwareupdate",
+            "port": "/opt/local/bin/port"
+        ]
+
+        for (name, path) in executables where stripped == name || stripped.hasPrefix("\(name) ") {
+            guard isRootOwnedExecutable(path) else { return nil }
+            return quoteArgument(path) + String(stripped.dropFirst(name.count))
+        }
+        return nil
+    }
+
+    private static func isRootOwnedExecutable(_ path: String) -> Bool {
+        guard FileManager.default.isExecutableFile(atPath: path),
+              let attributes = try? FileManager.default.attributesOfItem(atPath: path),
+              let owner = attributes[.ownerAccountID] as? NSNumber,
+              let permissions = attributes[.posixPermissions] as? NSNumber
+        else { return false }
+        return owner.intValue == 0 && permissions.intValue & 0o022 == 0
+    }
+
+    static func conciseError(from result: CommandResult) -> String {
+        let raw = result.stderr.nonEmpty ?? result.stdout.nonEmpty ?? "Command exited with status \(result.exitCode)."
+        let singleLine = raw
+            .split(whereSeparator: \.isNewline)
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return String(singleLine.prefix(220))
+    }
+
     @discardableResult
     static func run(_ tool: String, _ arguments: [String], timeout: TimeInterval = 120) throws -> CommandResult {
         guard let executable = which(tool) else { throw ShellError.notFound(tool) }

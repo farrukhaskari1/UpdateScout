@@ -19,6 +19,35 @@ struct ShellTests {
         ) == expected)
     }
 
+    @Test
+    func detectsAdministratorAndPermissionFailures() {
+        #expect(Shell.requiresAdministratorPrivileges("sudo softwareupdate --install update"))
+        #expect(Shell.requiresAdministratorPrivileges("  sudo port upgrade tool"))
+        #expect(!Shell.requiresAdministratorPrivileges("brew upgrade sudo"))
+
+        let denied = CommandResult(stdout: "", stderr: "User canceled.", exitCode: 1)
+        let ordinaryFailure = CommandResult(stdout: "", stderr: "Package not found", exitCode: 1)
+        #expect(Shell.isPermissionFailure(denied))
+        #expect(!Shell.isPermissionFailure(ordinaryFailure))
+    }
+
+    @Test
+    func runsOrdinaryUpdateCommandInsideApp() async throws {
+        let result = try #require(await Shell.runUpdateCommand("printf updatescout"))
+        #expect(result.ok)
+        #expect(result.stdout == "updatescout")
+    }
+
+    @Test
+    func refusesUntrustedPrivilegedCommands() async throws {
+        let result = try #require(await Shell.runUpdateCommand(
+            "sudo custom-tool update",
+            allowAdministratorPrivileges: true
+        ))
+        #expect(!result.ok)
+        #expect(Shell.isPermissionFailure(result))
+    }
+
     @Test(.timeLimit(.minutes(1)))
     func cancellationTerminatesSubprocess() async {
         let clock = ContinuousClock()

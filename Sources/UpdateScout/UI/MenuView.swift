@@ -71,6 +71,8 @@ struct MenuView: View {
                         ForEach(group.items) { item in
                             UpdateRow(
                                 item: item,
+                                executionState: store.updateState(for: item),
+                                updatesDisabled: store.isScanning || store.isUpdating,
                                 justCopied: copiedItemID == item.id,
                                 onUpdate: { updatePrompt = .confirmation(for: [item]) },
                                 onCopy: { copy(item) },
@@ -158,39 +160,62 @@ struct MenuView: View {
         let visible = showingSettings
             ? []
             : groups.flatMap(\.items).filter { $0.upgradeCommand != nil }
-        let allRunnable = uniqueRunnableItems(store.items)
+        let allRunnable = store.isScanning
+            ? []
+            : uniqueRunnableItems(store.items.filter(store.canRunUpdate))
+        let permissionFallbacks = uniqueRunnableItems(
+            store.items.filter { store.updateState(for: $0).isPermissionRequired }
+        )
         let total = allRunnable.count
 
         return HStack(spacing: Theme.Space.row) {
             if showingSettings {
-                Text("Updates open visibly in Terminal")
+                Text("Updates run only after confirmation")
                     .font(Theme.Font.caption)
                     .foregroundStyle(.tertiary)
             } else {
-                Button {
-                    updatePrompt = .confirmation(for: allRunnable)
-                } label: {
-                    Label("Update All", systemImage: "arrow.down.circle")
+                if store.isUpdating {
+                    Button("Stop Updates", systemImage: "stop.fill", action: store.cancelUpdates)
                         .font(Theme.Font.caption)
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .help("Stop the current update and clear the queue")
+                } else {
+                    Button {
+                        updatePrompt = .confirmation(for: allRunnable)
+                    } label: {
+                        Label("Update All", systemImage: "arrow.down.circle")
+                            .font(Theme.Font.caption)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(allRunnable.isEmpty)
+                    .help(allRunnable.isEmpty
+                          ? "No command-based updates available"
+                          : "Run all \(total) updates inside UpdateScout")
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-                .disabled(allRunnable.isEmpty)
-                .help(allRunnable.isEmpty
-                      ? "No command-based updates available"
-                      : "Update all \(total) items in Terminal")
 
-                Button {
-                    store.copyCommands(for: visible)
-                } label: {
-                    Image(systemName: "doc.on.doc")
+                if permissionFallbacks.isEmpty {
+                    Button {
+                        store.copyCommands(for: visible)
+                    } label: {
+                        Label("Copy visible commands", systemImage: "doc.on.doc")
+                            .labelStyle(.iconOnly)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(visible.isEmpty ? Color.secondary : Color.accentColor)
+                    .disabled(visible.isEmpty)
+                    .help(visible.isEmpty
+                          ? "Nothing to copy"
+                          : "Copy \(visible.count) upgrade command\(visible.count == 1 ? "" : "s")")
+                } else {
+                    Button("Copy Blocked", systemImage: "doc.on.doc") {
+                        store.copyCommands(for: permissionFallbacks)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .help("Copy \(permissionFallbacks.count) command\(permissionFallbacks.count == 1 ? "" : "s") that need permission")
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(visible.isEmpty ? Color.secondary : Color.accentColor)
-                .disabled(visible.isEmpty)
-                .help(visible.isEmpty
-                      ? "Nothing to copy"
-                      : "Copy \(visible.count) upgrade command\(visible.count == 1 ? "" : "s")")
             }
 
             Spacer()
@@ -205,40 +230,24 @@ struct MenuView: View {
     }
 
     private func updateAlert(_ prompt: UpdatePrompt) -> Alert {
-        switch prompt.kind {
-        case .confirmation(let items):
-            let count = items.count
-            let itemName = items.first?.name ?? "item"
-            let title = count == 1 ? "Update \(itemName)?" : "Update all \(count) items?"
-            let detail: String
-            if count == 1, let command = items.first?.upgradeCommand {
-                detail = "Terminal will open and run:\n\n\(command)\n\nYou can watch its progress and answer any password prompt."
-            } else {
-                detail = "Terminal will open and run \(count) update commands one by one. You can watch progress and review any failures."
-            }
-            return Alert(
-                title: Text(title),
-                message: Text(detail),
-                primaryButton: .default(Text("Open Terminal")) { runUpdates(items) },
-                secondaryButton: .cancel()
-            )
-        case .failure(let message):
-            return Alert(
-                title: Text("Couldn’t open Terminal"),
-                message: Text(message),
-                dismissButton: .default(Text("OK"))
-            )
+        let items = prompt.items
+        let count = items.count
+        let itemName = items.first?.name ?? "item"
+        let title = count == 1 ? "Update \(itemName)?" : "Update all \(count) items?"
+        let detail: String
+        if count == 1, let command = items.first?.upgradeCommand {
+            detail = "UpdateScout will run:\n\n\(command)\n\nmacOS may ask for administrator permission. If permission is declined, you can copy the command instead."
+        } else {
+            detail = "UpdateScout will run \(count) commands one by one. macOS may ask for administrator permission when an update needs it; declined commands can be copied instead."
         }
-    }
-
-    private func runUpdates(_ items: [UpdateItem]) {
-        do {
-            try store.runUpdatesInTerminal(items)
-        } catch {
-            Task { @MainActor in
-                updatePrompt = .failure(error.localizedDescription)
-            }
-        }
+        return Alert(
+            title: Text(title),
+            message: Text(detail),
+            primaryButton: .default(Text(count == 1 ? "Update" : "Update All")) {
+                store.startUpdates(items)
+            },
+            secondaryButton: .cancel()
+        )
     }
 
     /// A single command such as `rustup update` may represent several rows.
