@@ -291,6 +291,10 @@ final class UpdateStore: ObservableObject {
 
     // MARK: - Actions
 
+    func runUpdatesInTerminal(_ items: [UpdateItem]) throws {
+        try TerminalUpdateScript.run(items: items)
+    }
+
     func copyCommand(for item: UpdateItem) {
         guard let command = item.upgradeCommand else { return }
         let pasteboard = NSPasteboard.general

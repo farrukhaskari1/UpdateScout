@@ -75,6 +75,27 @@ enum Shell {
 
     static func has(_ name: String) -> Bool { which(name) != nil }
 
+    /// Quote one value as a literal zsh argument. Used for generated scripts,
+    /// never for an entire command line.
+    static func quoteArgument(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    /// Replace a command-template placeholder with one safely quoted argument.
+    /// Existing templates often wrap `{name}` in their own single or double
+    /// quotes; remove that wrapper first so the quotes don't become data.
+    static func replacingShellPlaceholder(
+        in template: String,
+        placeholder: String,
+        with value: String
+    ) -> String {
+        let quoted = quoteArgument(value)
+        return template
+            .replacingOccurrences(of: "\"\(placeholder)\"", with: quoted)
+            .replacingOccurrences(of: "'\(placeholder)'", with: quoted)
+            .replacingOccurrences(of: placeholder, with: quoted)
+    }
+
     @discardableResult
     static func run(_ tool: String, _ arguments: [String], timeout: TimeInterval = 120) throws -> CommandResult {
         guard let executable = which(tool) else { throw ShellError.notFound(tool) }

@@ -6,6 +6,7 @@ import AppKit
 struct UpdateRow: View {
     let item: UpdateItem
     let justCopied: Bool
+    let onUpdate: () -> Void
     let onCopy: () -> Void
     let onOpen: () -> Void
     let onIgnore: () -> Void
@@ -83,15 +84,13 @@ struct UpdateRow: View {
 
     @ViewBuilder
     private var trailing: some View {
-        if justCopied {
-            HStack(spacing: Theme.Space.tight) {
+        HStack(spacing: Theme.Space.tight) {
+            if justCopied {
                 Image(systemName: "checkmark")
-                Text("Copied")
-            }
-            .font(Theme.Font.label)
-            .foregroundStyle(.green)
-        } else if hovering {
-            HStack(spacing: 2) {
+                    .font(Theme.Font.label)
+                    .foregroundStyle(.green)
+                    .accessibilityLabel("Command copied")
+            } else if hovering {
                 if item.upgradeCommand != nil {
                     RowButton(systemName: "doc.on.doc", help: "Copy upgrade command", action: onCopy)
                 }
@@ -103,12 +102,26 @@ struct UpdateRow: View {
                     )
                 }
             }
+
+            if item.upgradeCommand != nil {
+                Button("Update", action: onUpdate)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .help("Update \(item.name) in Terminal")
+            } else if item.infoURL != nil {
+                Button("Open", action: onOpen)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .help("Open the download page for \(item.name)")
+            }
         }
     }
 
     @ViewBuilder
     private var rowMenu: some View {
         if let command = item.upgradeCommand {
+            Button("Update in Terminal") { onUpdate() }
+            Divider()
             Button("Copy “\(command)”") { onCopy() }
         }
         if item.infoURL != nil {
@@ -126,12 +139,12 @@ struct UpdateRow: View {
     }
 
     private var helpText: String {
-        if let command = item.upgradeCommand { return "Click to copy: \(command)" }
-        return "Update this one from inside the app — click to open its page"
+        if item.upgradeCommand != nil { return "Update \(item.name) in Terminal" }
+        return "Open the download page for \(item.name)"
     }
 
     private func primaryAction() {
-        if item.upgradeCommand != nil { onCopy() } else { onOpen() }
+        if item.upgradeCommand != nil { onUpdate() } else { onOpen() }
     }
 
     private var bumpColor: Color {

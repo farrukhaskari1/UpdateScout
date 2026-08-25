@@ -6,7 +6,7 @@ struct ProviderParserTests {
     @Test func parsesHomebrewJSONVariants() throws {
         let items = try #require(HomebrewProvider.parse(try TestFixture.data("homebrew", extension: "json")))
         #expect(items.map(\.name) == ["ripgrep", "raycast"])
-        #expect(items[0].upgradeCommand == "brew upgrade ripgrep")
+        #expect(items[0].upgradeCommand == "brew upgrade 'ripgrep'")
         #expect(items[1].source == .homebrewCask)
     }
 
@@ -66,7 +66,7 @@ struct ProviderParserTests {
         let cargo = CargoProvider.installedPackages(try TestFixture.text("cargo", extension: "txt"))
         #expect(pipx.first?.name == "ruff")
         #expect(uv.map(\.name) == ["ruff", "black"])
-        #expect(pip.first?.upgradeCommand == "pip3 install --upgrade requests")
+        #expect(pip.first?.upgradeCommand == "pip3 install --upgrade 'requests'")
         #expect(cargo.count == 1)
         #expect(cargo.first?.name == "ripgrep")
     }

@@ -129,7 +129,7 @@ struct SystemUpdateProvider: UpdateProvider {
                 name: label,
                 installedVersion: isOSUpdate ? installedOS : "—",
                 latestVersion: version,
-                upgradeCommand: "sudo softwareupdate --install \"\(label)\"",
+                upgradeCommand: "sudo softwareupdate --install \(Shell.quoteArgument(label))",
                 infoURL: URL(string: "x-apple.systempreferences:com.apple.preferences.softwareupdate")
             ))
             pendingLabel = nil
@@ -161,7 +161,7 @@ struct SystemUpdateProvider: UpdateProvider {
             name: "\(best.title) (major upgrade)",
             installedVersion: installedOS,
             latestVersion: best.version,
-            upgradeCommand: "softwareupdate --fetch-full-installer --full-installer-version \(best.version)",
+            upgradeCommand: "softwareupdate --fetch-full-installer --full-installer-version \(Shell.quoteArgument(best.version))",
             infoURL: URL(string: "x-apple.systempreferences:com.apple.preferences.softwareupdate")
         )
     }

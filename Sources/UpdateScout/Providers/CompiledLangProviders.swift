@@ -19,7 +19,7 @@ struct CargoProvider: UpdateProvider {
             else { return nil }
             return UpdateItem(
                 source: .cargo, name: entry.name, installedVersion: entry.version,
-                latestVersion: latest, upgradeCommand: "cargo install \(entry.name) --force",
+                latestVersion: latest, upgradeCommand: "cargo install \(Shell.quoteArgument(entry.name)) --force",
                 infoURL: URL(string: "https://crates.io/crates/\(entry.name)")
             )
         }
@@ -94,12 +94,13 @@ struct GoBinaryProvider: UpdateProvider {
                   let latest = await Registries.goModuleLatest(module),
                   Version.isNewer(latest, than: entry.version)
             else { return nil }
+            let upgradeTarget = Shell.quoteArgument("\(module)@latest")
             return UpdateItem(
                 source: .golang,
                 name: entry.name,
                 installedVersion: entry.version,
                 latestVersion: latest,
-                upgradeCommand: "go install \(module)@latest",
+                upgradeCommand: "go install \(upgradeTarget)",
                 infoURL: URL(string: "https://pkg.go.dev/\(module)")
             )
         }

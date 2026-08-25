@@ -15,6 +15,8 @@ silently executing privileged changes.
 - Keyboard and VoiceOver-friendly row and toolbar actions.
 - A quieter single-list interface: all sources remain visible, scope tabs are
   gone, and occasional search expands from the header action row.
+- Explicit per-item Update and Update All actions, with confirmation and visible
+  execution in Terminal.
 - CI plus Developer ID signing and notarization scaffolding.
 
 ## Next: trust and observability
@@ -32,8 +34,8 @@ silently executing privileged changes.
 - Optional OSV or vendor-advisory matching to distinguish routine updates from
   security-sensitive ones.
 - Release-note summaries generated locally or through a user-selected service.
-- Maintenance windows and command export profiles, while preserving the rule that
-  UpdateScout never installs without an explicit future product decision.
+- Maintenance windows and command export profiles, while preserving explicit
+  confirmation and visible execution for every update run.
 - A documented provider schema and community-maintained source catalog built on
   the existing `sources.json` format.
 

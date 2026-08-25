@@ -58,7 +58,7 @@ struct HomebrewProvider: UpdateProvider {
             guard Version.isNewer(latest, than: installed) else { continue }
             items.append(UpdateItem(
                 source: .homebrewFormula, name: name, installedVersion: installed,
-                latestVersion: latest, upgradeCommand: "brew upgrade \(name)",
+                latestVersion: latest, upgradeCommand: "brew upgrade \(Shell.quoteArgument(name))",
                 infoURL: URL(string: "https://formulae.brew.sh/formula/\(name)")
             ))
         }
@@ -78,7 +78,7 @@ struct HomebrewProvider: UpdateProvider {
                 name: name,
                 installedVersion: installed,
                 latestVersion: latest,
-                upgradeCommand: "brew upgrade --cask \(name)",
+                upgradeCommand: "brew upgrade --cask \(Shell.quoteArgument(name))",
                 infoURL: URL(string: "https://formulae.brew.sh/cask/\(name)"),
                 iconPath: iconPath(name)
             ))

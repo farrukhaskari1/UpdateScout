@@ -35,7 +35,7 @@ struct MiseProvider: UpdateProvider {
                 name: tool,
                 installedVersion: current,
                 latestVersion: latest,
-                upgradeCommand: "mise upgrade \(tool)",
+                upgradeCommand: "mise upgrade \(Shell.quoteArgument(tool))",
                 infoURL: nil
             ))
         }
@@ -135,7 +135,7 @@ struct GemProvider: UpdateProvider {
                 name: name,
                 installedVersion: String(text[oldRange]).trimmingCharacters(in: .whitespaces),
                 latestVersion: String(text[newRange]).trimmingCharacters(in: .whitespaces),
-                upgradeCommand: "gem update \(name)",
+                upgradeCommand: "gem update \(Shell.quoteArgument(name))",
                 infoURL: URL(string: "https://rubygems.org/gems/\(name)")
             ))
         }
@@ -177,12 +177,13 @@ struct NpmProvider: UpdateProvider {
                   Version.isNewer(latest, than: current)
             else { continue }
 
+            let upgradeTarget = Shell.quoteArgument("\(name)@latest")
             items.append(UpdateItem(
                 source: .npm,
                 name: name,
                 installedVersion: current,
                 latestVersion: latest,
-                upgradeCommand: "npm install -g \(name)@latest",
+                upgradeCommand: "npm install -g \(upgradeTarget)",
                 infoURL: URL(string: "https://www.npmjs.com/package/\(name)")
             ))
         }
@@ -229,7 +230,7 @@ struct MacPortsProvider: UpdateProvider {
                 installedVersion: String(row[oldRange]),
                 latestVersion: String(row[newRange]),
                 // MacPorts needs root; the app only ever hands over the string.
-                upgradeCommand: "sudo port upgrade \(name)",
+                upgradeCommand: "sudo port upgrade \(Shell.quoteArgument(name))",
                 infoURL: URL(string: "https://ports.macports.org/port/\(name)/")
             ))
         }
@@ -270,7 +271,7 @@ struct ComposerProvider: UpdateProvider {
                 name: name,
                 installedVersion: current,
                 latestVersion: latest,
-                upgradeCommand: "composer global update \(name)",
+                upgradeCommand: "composer global update \(Shell.quoteArgument(name))",
                 infoURL: URL(string: "https://packagist.org/packages/\(name)")
             ))
         }

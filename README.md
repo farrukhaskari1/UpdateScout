@@ -1,8 +1,8 @@
 # UpdateScout
 
-A local-first macOS menu bar app that finds available updates for native apps
-and developer tools in one place. UpdateScout gives you the relevant upgrade
-command or release page, but never installs anything itself.
+A local-first macOS menu bar app that finds and launches updates for native apps
+and developer tools in one place. Every command-based update is confirmed first
+and then runs visibly in Terminal.
 
 > **Project status:** Source release. Build locally on macOS 13 or later. Signed
 > public binaries are planned but are not available yet.
@@ -14,7 +14,8 @@ command or release page, but never installs anything itself.
   package managers, runtime managers, and more.
 - Extensible JSON-defined sources without recompiling the app.
 - Local-first operation with no account, analytics, or central inventory server.
-- Safe by design: upgrade actions are copied or opened, never executed.
+- Explicit by design: updates run only after confirmation, in a visible Terminal
+  window where you can inspect progress, errors, and password prompts.
 
 ## Interface
 
@@ -28,20 +29,22 @@ UpdateScout                         ⌕  ⟳  ⚙
  MACOS SYSTEM                            1
  ● macOS Sequoia          15.5 → 15.6
  HOMEBREW CASKS                          3
- ● raycast                1.82 → 1.85    ⧉ ↗
- ● zed                    0.147 → 0.150  ⧉ ↗
+ ● raycast                1.82 → 1.85    Update
+ ● zed                    0.147 → 0.150  Update
  APPS (SPARKLE)                          2
- ● Bartender              5.0.49 → 5.2   ↗
+ ● Bartender              5.0.49 → 5.2   Open
  HOMEBREW FORMULAE                       4
- ● ripgrep                14.1.0 → 14.1.1 ⧉ ↗
+ ● ripgrep                14.1.0 → 14.1.1 Update
  MISE                                    1
- ● node                   20.11.0 → 22.5.1 ⧉
+ ● node                   20.11.0 → 22.5.1 Update
 ─────────────────────────────────────────────
- Copy all commands                     Quit
+ Update All   ⧉                         Quit
 ```
 
-Click a row to copy its upgrade command. Click the arrow to open release notes
-or the download page.
+Click **Update** on a row to review and run its command in Terminal, or use
+**Update All** to run every available command in sequence. Apps without a safe
+command show **Open** instead, taking you to their normal download page. Copying
+commands and opening release notes remain available as secondary actions.
 Apps and command-line tools stay together in one always-expanded list. Search is
 kept in the top action row; click the magnifying glass only when you need it.
 
@@ -167,9 +170,11 @@ GitHub API limits. It is never written to the repository or application
 preferences. Keep tokens out of config files, screenshots, logs, issues, and
 pull requests.
 
-The app does not execute upgrade commands. It only copies commands to the
-clipboard or opens an information page. Review any copied command before running
-it in Terminal.
+The app executes an upgrade command only after you click **Update** or
+**Update All** and confirm the prompt. Commands run in a new Terminal window,
+not as hidden background processes, so you can review progress, errors, and any
+password request. Custom-source upgrade templates are user-controlled shell
+commands and should be reviewed before use.
 
 To report a vulnerability, follow [SECURITY.md](SECURITY.md). Please do not put
 sensitive security details in a public issue.
@@ -181,7 +186,7 @@ sensitive security details in a public issue.
 - **Dot colour** marks the size of the jump: orange for a major version, blue for minor, grey for a patch.
 - **Right-click any app row** to stop reporting it — useful for one that misreports its version or that you keep deliberately pinned. Ignored bundle IDs are stored in `UserDefaults`.
 - **The refresh button becomes a stop button** mid-scan. Cancelling terminates active provider subprocesses and stops their network tasks.
-- **Never installs.** Every action is copy-to-clipboard or open-a-page. Nothing is executed on your behalf, and nothing ever asks for your password.
+- **Confirms before updating.** Commands never run from a scan or background timer. They run only after an Update confirmation, visibly in Terminal; tools such as `sudo softwareupdate` may ask for your password there.
 
 ## Things worth knowing
 

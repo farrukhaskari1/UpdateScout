@@ -5,8 +5,8 @@ Thanks for helping improve UpdateScout.
 ## Before opening a change
 
 1. Check existing issues and the roadmap to avoid duplicate work.
-2. Keep the product boundary intact: UpdateScout reports updates and provides
-   commands or links; it does not silently install updates.
+2. Keep the product boundary intact: scans are read-only. Upgrade commands may
+   run only after explicit confirmation and must remain visible in Terminal.
 3. For a new provider, explain which executable or public registry it contacts
    and how failures are presented to the user.
 

@@ -14,9 +14,9 @@ unrelated system information before attaching logs or screenshots.
 
 Security reports are especially useful for command construction, subprocess
 handling, unsafe URL handling, credential exposure, update-feed parsing, and
-privilege-boundary mistakes. UpdateScout's intended boundary is detection and
-handoff: it must not execute an upgrade without an explicit future product
-decision.
+privilege-boundary mistakes. UpdateScout must never run an update during a scan,
+in the background, or without an explicit confirmation. Confirmed commands run
+visibly in Terminal so password prompts and failures are not hidden.
 
 ## Supported versions
 

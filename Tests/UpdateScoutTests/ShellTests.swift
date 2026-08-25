@@ -3,6 +3,22 @@ import Testing
 @testable import UpdateScout
 
 struct ShellTests {
+    @Test
+    func safelyReplacesBareAndQuotedPlaceholders() {
+        let value = "package'; touch /tmp/nope; '"
+        let expected = "tool upgrade 'package'\\''; touch /tmp/nope; '\\'''"
+
+        #expect(Shell.replacingShellPlaceholder(
+            in: "tool upgrade {name}", placeholder: "{name}", with: value
+        ) == expected)
+        #expect(Shell.replacingShellPlaceholder(
+            in: "tool upgrade \"{name}\"", placeholder: "{name}", with: value
+        ) == expected)
+        #expect(Shell.replacingShellPlaceholder(
+            in: "tool upgrade '{name}'", placeholder: "{name}", with: value
+        ) == expected)
+    }
+
     @Test(.timeLimit(.minutes(1)))
     func cancellationTerminatesSubprocess() async {
         let clock = ContinuousClock()

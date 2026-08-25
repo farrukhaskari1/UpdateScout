@@ -9,6 +9,7 @@ struct MenuView: View {
     @State private var isSearchPresented = false
     @State private var showingSettings = false
     @State private var copiedItemID: String?
+    @State private var updatePrompt: UpdatePrompt?
 
     var body: some View {
         // Grouped once per render: filtering, grouping and sorting the whole
@@ -43,6 +44,7 @@ struct MenuView: View {
                 isSearchPresented = false
             }
         }
+        .alert(item: $updatePrompt, content: updateAlert)
     }
 
     // MARK: - Content
@@ -70,6 +72,7 @@ struct MenuView: View {
                             UpdateRow(
                                 item: item,
                                 justCopied: copiedItemID == item.id,
+                                onUpdate: { updatePrompt = .confirmation(for: [item]) },
                                 onCopy: { copy(item) },
                                 onOpen: { store.openInfo(for: item) },
                                 onIgnore: { store.ignore(item) }
@@ -155,20 +158,32 @@ struct MenuView: View {
         let visible = showingSettings
             ? []
             : groups.flatMap(\.items).filter { $0.upgradeCommand != nil }
-        let total = store.items.filter { $0.upgradeCommand != nil }.count
+        let allRunnable = uniqueRunnableItems(store.items)
+        let total = allRunnable.count
 
         return HStack(spacing: Theme.Space.row) {
             if showingSettings {
-                Text("Never installs anything")
+                Text("Updates open visibly in Terminal")
                     .font(Theme.Font.caption)
                     .foregroundStyle(.tertiary)
             } else {
                 Button {
+                    updatePrompt = .confirmation(for: allRunnable)
+                } label: {
+                    Label("Update All", systemImage: "arrow.down.circle")
+                        .font(Theme.Font.caption)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(allRunnable.isEmpty)
+                .help(allRunnable.isEmpty
+                      ? "No command-based updates available"
+                      : "Update all \(total) items in Terminal")
+
+                Button {
                     store.copyCommands(for: visible)
                 } label: {
-                    Label(visible.count == total ? "Copy commands" : "Copy \(visible.count) shown",
-                          systemImage: "doc.on.doc")
-                        .font(Theme.Font.caption)
+                    Image(systemName: "doc.on.doc")
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(visible.isEmpty ? Color.secondary : Color.accentColor)
@@ -187,6 +202,53 @@ struct MenuView: View {
         }
         .padding(.horizontal, Theme.Space.edge)
         .padding(.vertical, Theme.Space.inner + 2)
+    }
+
+    private func updateAlert(_ prompt: UpdatePrompt) -> Alert {
+        switch prompt.kind {
+        case .confirmation(let items):
+            let count = items.count
+            let itemName = items.first?.name ?? "item"
+            let title = count == 1 ? "Update \(itemName)?" : "Update all \(count) items?"
+            let detail: String
+            if count == 1, let command = items.first?.upgradeCommand {
+                detail = "Terminal will open and run:\n\n\(command)\n\nYou can watch its progress and answer any password prompt."
+            } else {
+                detail = "Terminal will open and run \(count) update commands one by one. You can watch progress and review any failures."
+            }
+            return Alert(
+                title: Text(title),
+                message: Text(detail),
+                primaryButton: .default(Text("Open Terminal")) { runUpdates(items) },
+                secondaryButton: .cancel()
+            )
+        case .failure(let message):
+            return Alert(
+                title: Text("Couldn’t open Terminal"),
+                message: Text(message),
+                dismissButton: .default(Text("OK"))
+            )
+        }
+    }
+
+    private func runUpdates(_ items: [UpdateItem]) {
+        do {
+            try store.runUpdatesInTerminal(items)
+        } catch {
+            Task { @MainActor in
+                updatePrompt = .failure(error.localizedDescription)
+            }
+        }
+    }
+
+    /// A single command such as `rustup update` may represent several rows.
+    /// Update All should run it once, not once per reported toolchain.
+    private func uniqueRunnableItems(_ items: [UpdateItem]) -> [UpdateItem] {
+        var commands = Set<String>()
+        return items.filter { item in
+            guard let command = item.upgradeCommand else { return false }
+            return commands.insert(command).inserted
+        }
     }
 
     private func copy(_ item: UpdateItem) {

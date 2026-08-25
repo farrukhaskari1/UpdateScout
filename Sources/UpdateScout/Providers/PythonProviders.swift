@@ -20,7 +20,7 @@ struct PipxProvider: UpdateProvider {
             else { return nil }
             return UpdateItem(
                 source: .pipx, name: entry.name, installedVersion: entry.version,
-                latestVersion: latest, upgradeCommand: "pipx upgrade \(entry.name)",
+                latestVersion: latest, upgradeCommand: "pipx upgrade \(Shell.quoteArgument(entry.name))",
                 infoURL: URL(string: "https://pypi.org/project/\(entry.name)/")
             )
         }
@@ -64,7 +64,7 @@ struct UvToolProvider: UpdateProvider {
             else { return nil }
             return UpdateItem(
                 source: .uv, name: entry.name, installedVersion: entry.version,
-                latestVersion: latest, upgradeCommand: "uv tool upgrade \(entry.name)",
+                latestVersion: latest, upgradeCommand: "uv tool upgrade \(Shell.quoteArgument(entry.name))",
                 infoURL: URL(string: "https://pypi.org/project/\(entry.name)/")
             )
         }
@@ -171,7 +171,7 @@ struct PipProvider: UpdateProvider {
                 name: name,
                 installedVersion: current,
                 latestVersion: latest,
-                upgradeCommand: "\(tool) install --upgrade \(name)",
+                upgradeCommand: "\(tool) install --upgrade \(Shell.quoteArgument(name))",
                 infoURL: URL(string: "https://pypi.org/project/\(name)/")
             ))
         }

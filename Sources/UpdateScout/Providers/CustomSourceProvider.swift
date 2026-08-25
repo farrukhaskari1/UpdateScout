@@ -205,7 +205,9 @@ struct CustomSourceProvider: UpdateProvider {
             name: name,
             installedVersion: current,
             latestVersion: latest,
-            upgradeCommand: source.upgrade?.replacingOccurrences(of: "{name}", with: name),
+            upgradeCommand: source.upgrade.map {
+                Shell.replacingShellPlaceholder(in: $0, placeholder: "{name}", with: name)
+            },
             infoURL: source.infoURL.flatMap { URL(string: $0.replacingOccurrences(of: "{name}", with: name)) },
             groupID: source.id,
             groupTitle: source.title
