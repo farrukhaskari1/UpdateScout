@@ -3,7 +3,7 @@ import Testing
 
 struct UpdatePromptTests {
     @Test
-    func describesSingleAndBulkConfirmations() {
+    func describesSingleBulkAndRecoveryConfirmations() throws {
         let first = UpdateItem(
             source: .homebrewFormula,
             name: "tool-one",
@@ -30,5 +30,16 @@ struct UpdatePromptTests {
         #expect(bulk.title == "Run 2 updates?")
         #expect(bulk.confirmLabel == "Update All")
         #expect(bulk.commandPreview == nil)
+
+        let issue = ScanIssue(
+            source: .gem,
+            message: "Use a managed Ruby.",
+            severity: .skipped,
+            recovery: IssueRecovery(label: "Install Ruby", command: "brew install ruby")
+        )
+        let recovery = try #require(UpdatePrompt.confirmation(for: issue))
+        #expect(recovery.title == "Install Ruby?")
+        #expect(recovery.confirmLabel == "Install Ruby")
+        #expect(recovery.commandPreview == "brew install ruby")
     }
 }

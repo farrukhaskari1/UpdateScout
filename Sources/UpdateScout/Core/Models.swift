@@ -202,11 +202,18 @@ struct ScanIssue: Identifiable, Hashable, Sendable {
     let source: SourceKind
     let message: String
     let severity: IssueSeverity
+    let recovery: IssueRecovery?
 
-    init(source: SourceKind, message: String, severity: IssueSeverity = .failed) {
+    init(
+        source: SourceKind,
+        message: String,
+        severity: IssueSeverity = .failed,
+        recovery: IssueRecovery? = nil
+    ) {
         self.source = source
         self.message = message
         self.severity = severity
+        self.recovery = recovery
     }
 
     var id: String { "\(source.rawValue):\(message)" }
@@ -237,8 +244,10 @@ extension UpdateProvider {
     }
 
     /// We deliberately didn't check, and here's why.
-    func skipped(_ message: String) -> ScanResult {
-        ScanResult(items: [], issues: [ScanIssue(source: kind, message: message, severity: .skipped)])
+    func skipped(_ message: String, recovery: IssueRecovery? = nil) -> ScanResult {
+        ScanResult(items: [], issues: [
+            ScanIssue(source: kind, message: message, severity: .skipped, recovery: recovery)
+        ])
     }
 }
 

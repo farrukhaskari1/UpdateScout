@@ -105,7 +105,18 @@ struct GemProvider: UpdateProvider {
     func scan() async -> ScanResult {
         guard isAvailable else { return ScanResult() }
         guard !isSystemRuby else {
-            return skipped("Using macOS system Ruby, whose gems can't be updated. Install Ruby via Homebrew, rbenv, or mise to track these.")
+            let recovery: IssueRecovery?
+            if Shell.has("brew") {
+                recovery = IssueRecovery(label: "Install Ruby", command: "brew install ruby")
+            } else if Shell.has("mise") {
+                recovery = IssueRecovery(label: "Install Ruby", command: "mise use -g ruby@latest")
+            } else {
+                recovery = nil
+            }
+            return skipped(
+                "macOS protects its built-in Ruby. Install a user-managed Ruby to safely track and update gems.",
+                recovery: recovery
+            )
         }
         guard let result = await Shell.runAsync("gem", ["outdated"], timeout: 240) else {
             return issue("Could not run `gem outdated`.")

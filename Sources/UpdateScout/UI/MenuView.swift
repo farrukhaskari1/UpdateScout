@@ -96,7 +96,15 @@ struct MenuView: View {
                         }
                     }
 
-                    if !notes.isEmpty { notesBlock(notes) }
+                    if !notes.isEmpty {
+                        ScanIssuesSection(
+                            issues: notes,
+                            state: store.recoveryState,
+                            actionsDisabled: store.isScanning || store.isUpdating,
+                            onRecover: requestRecovery,
+                            onCopy: store.copyRecoveryCommand
+                        )
+                    }
                 }
                 .padding(.bottom, Theme.Space.inner)
             }
@@ -126,47 +134,6 @@ struct MenuView: View {
         .padding(.vertical, Theme.Space.section)
     }
 
-    // MARK: - Notes (skips and failures)
-
-    private func notesBlock(_ notes: [ScanIssue]) -> some View {
-        let failures = notes.filter { $0.severity == .failed }
-
-        return VStack(alignment: .leading, spacing: Theme.Space.inner) {
-            Text(failures.isEmpty ? "Not checked" : "Needs attention")
-                .font(Theme.Font.label)
-                .textCase(.uppercase)
-                .tracking(0.6)
-                .foregroundStyle(.tertiary)
-
-            ForEach(notes) { note in
-                noteRow(note)
-            }
-        }
-        .padding(.horizontal, Theme.Space.edge)
-        .padding(.top, Theme.Space.row)
-    }
-
-    private func noteRow(_ note: ScanIssue) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: Theme.Space.inner) {
-            Image(systemName: note.severity.symbol)
-                .font(Theme.Font.caption)
-                // A deliberate skip is information, not a warning. Only real
-                // failures get to use the alarming colour.
-                .foregroundStyle(note.severity == .failed ? Color.orange : Color.secondary)
-                .frame(width: Theme.iconSide - Theme.Space.tight, alignment: .leading)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(note.source.title)
-                    .font(Theme.Font.caption)
-                    .foregroundStyle(.primary)
-                Text(note.message)
-                    .font(Theme.Font.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-
     // MARK: - Footer
 
     private func footer(_ groups: [SourceGroup]) -> some View {
@@ -189,11 +156,17 @@ struct MenuView: View {
                     .foregroundStyle(.tertiary)
             } else {
                 if store.isUpdating {
-                    Button("Stop Updates", systemImage: "stop.fill", action: store.cancelUpdates)
+                    Button(
+                        store.isRecovering ? "Stop Setup" : "Stop Updates",
+                        systemImage: "stop.fill",
+                        action: store.cancelUpdates
+                    )
                         .font(Theme.Font.caption)
                         .buttonStyle(.bordered)
                         .controlSize(.small)
-                        .help("Stop the current update and clear the queue")
+                        .help(store.isRecovering
+                              ? "Stop the current setup command"
+                              : "Stop the current update and clear the queue")
                 } else if !allRunnable.isEmpty {
                     Button(action: { requestUpdate(allRunnable) }) {
                         Label("Update All", systemImage: "arrow.down.circle")
@@ -289,10 +262,19 @@ struct MenuView: View {
         withAnimation(.easeInOut(duration: 0.15)) { updatePrompt = prompt }
     }
 
+    private func requestRecovery(_ issue: ScanIssue) {
+        guard let prompt = UpdatePrompt.confirmation(for: issue) else { return }
+        AppActivation.bringForward()
+        withAnimation(.easeInOut(duration: 0.15)) { updatePrompt = prompt }
+    }
+
     private func confirmUpdate() {
         guard let prompt = updatePrompt else { return }
         withAnimation(.easeInOut(duration: 0.15)) { updatePrompt = nil }
-        store.startUpdates(prompt.items)
+        switch prompt {
+        case .updates(let items): store.startUpdates(items)
+        case .recovery(let issue): store.startRecovery(issue)
+        }
     }
 
     private func cancelUpdateConfirmation() {

@@ -13,6 +13,7 @@ final class UpdateStore: ObservableObject {
     @Published private(set) var progressLabel: String = ""
     @Published private(set) var hasCompletedScanThisLaunch = false
     @Published private(set) var updateStates: [String: UpdateExecutionState] = [:]
+    @Published private(set) var recoveryStates: [String: UpdateExecutionState] = [:]
     @Published private(set) var isUpdating = false
     @Published private(set) var updateProgressLabel = ""
     @Published var lastScan: Date?
@@ -137,6 +138,7 @@ final class UpdateStore: ObservableObject {
     var applicationCount: Int { items.filter { $0.source.isApplication }.count }
     var toolCount: Int { items.count - applicationCount }
     var hasFailures: Bool { issues.contains { $0.severity == .failed } }
+    var isRecovering: Bool { recoveryStates.values.contains(where: \.isActive) }
 
     // MARK: - Scanning
 
@@ -152,6 +154,7 @@ final class UpdateStore: ObservableObject {
         guard !isScanning, !isUpdating else { return }
         scanTask?.cancel()
         updateStates = [:]
+        recoveryStates = [:]
         isScanning = true
         progressLabel = "Preparing sources"
 
@@ -305,6 +308,10 @@ final class UpdateStore: ObservableObject {
         item.upgradeCommand != nil && updateState(for: item).canRun
     }
 
+    func recoveryState(for issue: ScanIssue) -> UpdateExecutionState {
+        recoveryStates[issue.id] ?? .idle
+    }
+
     func startUpdates(_ requestedItems: [UpdateItem]) {
         guard !isUpdating, !isScanning else { return }
         var seen = Set<String>()
@@ -327,6 +334,79 @@ final class UpdateStore: ObservableObject {
 
     func cancelUpdates() {
         updateTask?.cancel()
+    }
+
+    func startRecovery(_ issue: ScanIssue) {
+        guard !isUpdating, !isScanning,
+              let recovery = issue.recovery,
+              recoveryState(for: issue).canRun
+        else { return }
+
+        guard let command = recovery.command else {
+            applySourceChanges(from: recovery)
+            refresh()
+            return
+        }
+
+        isUpdating = true
+        recoveryStates[issue.id] = .running
+        updateProgressLabel = "Setting up \(issue.source.title)"
+        updateTask = Task { [weak self] in
+            await self?.performRecovery(issue, recovery: recovery, command: command)
+        }
+    }
+
+    private func performRecovery(
+        _ issue: ScanIssue,
+        recovery: IssueRecovery,
+        command: String
+    ) async {
+        let result = await Shell.runUpdateCommand(command)
+        if Task.isCancelled {
+            recoveryStates[issue.id] = .stopped("Stopped. Refresh before trying again.")
+            finishRecovery()
+            return
+        }
+
+        guard let result else {
+            recoveryStates[issue.id] = .failed(
+                "The setup command could not be started. Copy it and run it manually."
+            )
+            finishRecovery()
+            return
+        }
+
+        if result.ok {
+            recoveryStates[issue.id] = .succeeded
+            Shell.invalidateExecutableCache()
+            applySourceChanges(from: recovery)
+            finishRecovery()
+            probeAvailableSources()
+            refresh()
+        } else if Shell.isPermissionFailure(result) {
+            recoveryStates[issue.id] = .permissionRequired(
+                "Permission wasn’t granted. Copy the setup command to run it manually."
+            )
+            finishRecovery()
+        } else {
+            recoveryStates[issue.id] = .failed(Shell.conciseError(from: result))
+            finishRecovery()
+        }
+    }
+
+    private func applySourceChanges(from recovery: IssueRecovery) {
+        if let source = recovery.disablesSource {
+            settings.setEnabled(false, for: source)
+        }
+        if let source = recovery.enablesSource {
+            settings.setEnabled(true, for: source)
+        }
+    }
+
+    private func finishRecovery() {
+        isUpdating = false
+        updateProgressLabel = ""
+        updateTask = nil
     }
 
     private func performUpdates(_ runnable: [UpdateItem]) async {
@@ -378,6 +458,13 @@ final class UpdateStore: ObservableObject {
 
     func copyCommand(for item: UpdateItem) {
         guard let command = item.upgradeCommand else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(command, forType: .string)
+    }
+
+    func copyRecoveryCommand(for issue: ScanIssue) {
+        guard let command = issue.recovery?.command else { return }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(command, forType: .string)

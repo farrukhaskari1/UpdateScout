@@ -48,6 +48,8 @@ commands and opening release notes remain available as secondary actions. Update
 confirmation appears inline in the menu so it remains visible and actionable.
 The panel stays in front while a confirmation or update is active, then returns
 to normal menu-bar behavior when the action finishes.
+Protected runtime notices are actionable: UpdateScout can install a managed
+Ruby, or switch an externally managed Python check to pipx/uv after confirmation.
 Apps and command-line tools stay together in one always-expanded list. Search is
 kept in the top action row; click the magnifying glass only when you need it.
 

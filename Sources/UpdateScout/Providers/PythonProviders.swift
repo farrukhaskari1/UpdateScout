@@ -143,7 +143,33 @@ struct PipProvider: UpdateProvider {
         guard Shell.has(tool) else { return ScanResult() }
 
         if await externallyManagedMarker(for: tool) != nil {
-            return skipped("This Python is externally managed (PEP 668). Upgrade through Homebrew, pipx, or uv instead.")
+            let recovery: IssueRecovery?
+            if Shell.has("pipx") {
+                recovery = IssueRecovery(
+                    label: "Use pipx",
+                    disablesSource: .pip,
+                    enablesSource: .pipx
+                )
+            } else if Shell.has("uv") {
+                recovery = IssueRecovery(
+                    label: "Use uv",
+                    disablesSource: .pip,
+                    enablesSource: .uv
+                )
+            } else if Shell.has("brew") {
+                recovery = IssueRecovery(
+                    label: "Set Up pipx",
+                    command: "brew install pipx",
+                    disablesSource: .pip,
+                    enablesSource: .pipx
+                )
+            } else {
+                recovery = nil
+            }
+            return skipped(
+                "This Python is protected by PEP 668. Use pipx or uv for command-line apps, and virtual environments for project libraries.",
+                recovery: recovery
+            )
         }
 
         guard let result = await Shell.runAsync(

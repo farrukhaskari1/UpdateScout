@@ -67,13 +67,31 @@ enum Shell {
         }
         if cached.0 { return cached.1 }
         let fileManager = FileManager.default
-        let found = searchPath.split(separator: ":").map { "\($0)/\(name)" }
+        var found = searchPath.split(separator: ":").map { "\($0)/\(name)" }
             .first(where: fileManager.isExecutableFile(atPath:))
-        whichCache.withLock { $0[name] = found }
-        return found
+        // Homebrew's Ruby is keg-only, so its `gem` may not be in PATH. Prefer
+        // it only when PATH otherwise falls back to Apple's protected runtime;
+        // an explicit mise/rbenv/asdf choice still wins.
+        if (name == "gem" || name == "ruby"),
+           found?.hasPrefix("/usr/bin/") == true || found?.hasPrefix("/System/") == true {
+            found = [
+                "/opt/homebrew/opt/ruby/bin/\(name)",
+                "/usr/local/opt/ruby/bin/\(name)"
+            ].first(where: fileManager.isExecutableFile(atPath:)) ?? found
+        }
+        let resolved = found
+        whichCache.withLock { $0[name] = resolved }
+        return resolved
     }
 
     static func has(_ name: String) -> Bool { which(name) != nil }
+
+    /// Newly installed runtimes and package managers must be discoverable by
+    /// the refresh that follows an in-app setup action.
+    static func invalidateExecutableCache() {
+        pathCache.withLock { $0 = nil }
+        whichCache.withLock { $0.removeAll() }
+    }
 
     /// Quote one value as a literal zsh argument. Used for generated scripts,
     /// never for an entire command line.
