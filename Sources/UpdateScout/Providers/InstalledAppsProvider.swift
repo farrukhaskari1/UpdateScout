@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// A `.app` bundle found on disk.
 struct InstalledApp: Sendable {
@@ -23,25 +24,24 @@ enum AppInventory {
         ]
     }()
 
-    private static let cacheLock = NSLock()
-    private static var cache: (apps: [InstalledApp], stamp: Date)?
+    private struct Cache: Sendable {
+        var apps: [InstalledApp]
+        var stamp: Date
+    }
+
+    private static let cache = OSAllocatedUnfairLock(initialState: Cache?.none)
 
     /// Walking every bundle costs a few hundred plist reads, and two providers
     /// need the same list, so results are reused for a minute.
     static func scan() -> [InstalledApp] {
-        cacheLock.lock()
-        if let cache, Date().timeIntervalSince(cache.stamp) < 60 {
-            let apps = cache.apps
-            cacheLock.unlock()
-            return apps
-        }
-        cacheLock.unlock()
+        if let apps = cache.withLock({ cached -> [InstalledApp]? in
+            guard let cached, Date.now.timeIntervalSince(cached.stamp) < 60 else { return nil }
+            return cached.apps
+        }) { return apps }
 
         let apps = walk()
 
-        cacheLock.lock()
-        cache = (apps, Date())
-        cacheLock.unlock()
+        cache.withLock { $0 = Cache(apps: apps, stamp: .now) }
         return apps
     }
 
@@ -121,6 +121,8 @@ enum AppInventory {
 /// publish updates. Covers most manually installed software.
 struct SparkleAppProvider: UpdateProvider {
     let kind: SourceKind = .sparkleApp
+    let ignoredBundleIDs: Set<String>
+    let deduplicateHomebrewCasks: Bool
     var isAvailable: Bool { true }
 
     /// Feeds we should not hit: Apple's own apps and anything with an https-less URL.
@@ -134,8 +136,8 @@ struct SparkleAppProvider: UpdateProvider {
             guard let feed = app.feedURL, isUsable(feed) else { return false }
             guard !app.bundleID.hasPrefix("com.apple.") else { return false }
             // Homebrew already reports its own casks; don't double-list.
-            guard !HomebrewProvider.managesApp(named: app.name) else { return false }
-            guard !UserSettings.shared.isIgnored(app.bundleID) else { return false }
+            guard !deduplicateHomebrewCasks || !HomebrewProvider.managesApp(named: app.name) else { return false }
+            guard !ignoredBundleIDs.contains(app.bundleID) else { return false }
             return true
         }
 
@@ -191,6 +193,7 @@ struct SparkleAppProvider: UpdateProvider {
 /// Keys are bundle identifiers; values are GitHub `owner/repo` slugs.
 struct GitHubAppProvider: UpdateProvider {
     let kind: SourceKind = .githubApp
+    let ignoredBundleIDs: Set<String>
 
     static var configURL: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -209,7 +212,7 @@ struct GitHubAppProvider: UpdateProvider {
         let apps = AppInventory.scan()
         let pinned: [PackageRef] = apps.compactMap { app in
             guard let repo = mapping[app.bundleID] else { return nil }
-            guard !UserSettings.shared.isIgnored(app.bundleID) else { return nil }
+            guard !ignoredBundleIDs.contains(app.bundleID) else { return nil }
             return PackageRef(name: app.name,
                               version: app.shortVersion,
                               extra: repo,

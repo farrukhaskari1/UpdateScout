@@ -24,25 +24,15 @@ enum Theme {
 
     // MARK: - Type scale
 
-    /// Five sizes, none below 11pt.
-    ///
-    /// macOS 27's design pass is explicitly about readability and contrast, and
-    /// the 8–10pt text this replaced failed both. Hierarchy comes from weight
-    /// and colour, not from shrinking text until it disappears.
+    /// Semantic styles honor the user's system text-size preferences.
     enum Font {
-        /// Window title.
-        static let title = SwiftUI.Font.system(size: 14, weight: .semibold)
-        /// Row names, primary content.
-        static let body = SwiftUI.Font.system(size: 13, weight: .medium)
-        /// Controls and buttons — matches the macOS small-control size.
-        static let control = SwiftUI.Font.system(size: 12)
-        /// Subtitles and secondary content.
-        static let caption = SwiftUI.Font.system(size: 11.5)
-        /// Uppercase section labels and count badges.
-        static let label = SwiftUI.Font.system(size: 11, weight: .semibold)
-        /// Version strings — monospaced so digits line up column to column.
-        static let mono = SwiftUI.Font.system(size: 11.5, design: .monospaced)
-        static let monoEmphasis = SwiftUI.Font.system(size: 11.5, weight: .semibold, design: .monospaced)
+        static let title = SwiftUI.Font.headline
+        static let body = SwiftUI.Font.callout
+        static let control = SwiftUI.Font.callout
+        static let caption = SwiftUI.Font.caption
+        static let label = SwiftUI.Font.caption.bold()
+        static let mono = SwiftUI.Font.caption.monospaced()
+        static let monoEmphasis = SwiftUI.Font.caption.monospaced().bold()
     }
 
     // MARK: - Shape
@@ -59,7 +49,7 @@ enum Theme {
 
     /// Hover highlight, matching the weight AppKit menus use.
     static let hover = Color.primary.opacity(0.06)
-    /// Fill behind count badges and the search field.
+    /// Fill behind count badges and transient search.
     static let subtleFill = Color(nsColor: .quaternaryLabelColor).opacity(0.4)
     /// Disabled control glyphs.
     static let disabledLabel = Color(nsColor: .tertiaryLabelColor)

@@ -2,3 +2,26 @@
 dist/
 .DS_Store
 *.xcuserstate
+
+# Local IDE and test output
+.swiftpm/xcode/package.xcworkspace/xcuserdata/
+DerivedData/
+*.xcresult
+.idea/
+.vscode/
+
+# Credentials and machine-local configuration
+.env
+.env.*
+!.env.example
+*.cer
+*.key
+*.p8
+*.p12
+*.pem
+*.mobileprovision
+github-apps.json
+sources.json
+
+# Local release artifacts
+*.zip

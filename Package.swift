@@ -1,4 +1,4 @@
-// swift-tools-version: 5.9
+// swift-tools-version: 6.2
 import PackageDescription
 
 let package = Package(
@@ -8,6 +8,13 @@ let package = Package(
         .executableTarget(
             name: "UpdateScout",
             path: "Sources/UpdateScout"
+        ),
+        .testTarget(
+            name: "UpdateScoutTests",
+            dependencies: ["UpdateScout"],
+            path: "Tests/UpdateScoutTests",
+            resources: [.process("Fixtures")]
         )
-    ]
+    ],
+    swiftLanguageModes: [.v6]
 )

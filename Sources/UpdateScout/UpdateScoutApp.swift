@@ -51,6 +51,13 @@ private struct MenuBarLabel: View {
 /// straight out of `swift build` doesn't qualify.
 enum Notifications {
     static var areAvailable: Bool { Bundle.main.bundleIdentifier != nil }
+
+    static func requestAuthorization() {
+        guard areAvailable else { return }
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, error in
+            if let error { NSLog("UpdateScout notification authorization failed: \(error.localizedDescription)") }
+        }
+    }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -60,13 +67,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Recovering the login shell's PATH costs a subprocess; do it before the
         // first menu open so the Settings pane doesn't stutter.
-        DispatchQueue.global(qos: .utility).async { _ = Shell.searchPath }
+        Task { _ = await Shell.offPool { Shell.searchPath } }
 
         // UNUserNotificationCenter throws for an unbundled process, which is
         // what `swift run` produces. Only ask when we're a real .app.
         if UserSettings.shared.notifyOnNew, Notifications.areAvailable {
-            UNUserNotificationCenter.current()
-                .requestAuthorization(options: [.alert, .sound]) { _, _ in }
+            Notifications.requestAuthorization()
         }
     }
 }

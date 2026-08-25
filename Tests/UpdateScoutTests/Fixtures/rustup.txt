@@ -1,0 +1,2 @@
+stable-aarch64-apple-darwin - Update available : 1.76.0 -> 1.77.0
+nightly-aarch64-apple-darwin - Up to date : 1.80.0

@@ -11,7 +11,7 @@ struct MiseProvider: UpdateProvider {
             return issue("Could not run `mise outdated`.")
         }
         guard let data = result.stdout.data(using: .utf8),
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+              let items = Self.parse(data)
         else {
             // Older mise versions print a table; nothing to parse reliably.
             return result.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -19,6 +19,11 @@ struct MiseProvider: UpdateProvider {
                 : issue("`mise outdated --json` returned unexpected output — update mise.")
         }
 
+        return ScanResult(items: items, issues: [])
+    }
+
+    static func parse(_ data: Data) -> [UpdateItem]? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
         var items: [UpdateItem] = []
         for (tool, raw) in root {
             guard let entry = raw as? [String: Any] else { continue }
@@ -34,7 +39,7 @@ struct MiseProvider: UpdateProvider {
                 infoURL: nil
             ))
         }
-        return ScanResult(items: items, issues: [])
+        return items
     }
 }
 
@@ -48,10 +53,17 @@ struct RustupProvider: UpdateProvider {
         guard let result = await Shell.runAsync("rustup", ["check"], timeout: 120) else {
             return issue("Could not run `rustup check`.")
         }
+        // rustup uses 100 specifically to mean that updates are available.
+        guard result.ok || result.exitCode == 100 else {
+            return issue(result.stderr.nonEmpty ?? "`rustup check` failed.")
+        }
+        return ScanResult(items: Self.parse(result.stdout), issues: [])
+    }
 
+    static func parse(_ output: String) -> [UpdateItem] {
         var items: [UpdateItem] = []
         // "stable-aarch64-apple-darwin - Update available : 1.76.0 -> 1.77.0"
-        for line in result.stdout.split(separator: "\n") {
+        for line in output.split(separator: "\n") {
             let text = String(line)
             guard text.contains("Update available") else { continue }
             // The toolchain name is the whole field before " - ". Splitting on a
@@ -72,7 +84,7 @@ struct RustupProvider: UpdateProvider {
                 infoURL: nil
             ))
         }
-        return ScanResult(items: items, issues: [])
+        return items
     }
 }
 
@@ -98,13 +110,18 @@ struct GemProvider: UpdateProvider {
         guard let result = await Shell.runAsync("gem", ["outdated"], timeout: 240) else {
             return issue("Could not run `gem outdated`.")
         }
+        guard result.ok else { return issue(result.stderr.nonEmpty ?? "`gem outdated` failed.") }
 
+        return ScanResult(items: Self.parse(result.stdout), issues: [])
+    }
+
+    static func parse(_ output: String) -> [UpdateItem] {
         var items: [UpdateItem] = []
         // "rails (7.0.4 < 7.1.2)"
         let pattern = #"^(\S+)\s+\(([^<]+)<\s*([^)]+)\)"#
         let regex = try? NSRegularExpression(pattern: pattern, options: [.anchorsMatchLines])
 
-        for line in result.stdout.split(separator: "\n") {
+        for line in output.split(separator: "\n") {
             let text = String(line)
             let range = NSRange(text.startIndex..., in: text)
             guard let match = regex?.firstMatch(in: text, range: range), match.numberOfRanges == 4,
@@ -122,7 +139,7 @@ struct GemProvider: UpdateProvider {
                 infoURL: URL(string: "https://rubygems.org/gems/\(name)")
             ))
         }
-        return ScanResult(items: items, issues: [])
+        return items
     }
 }
 
@@ -139,10 +156,13 @@ struct NpmProvider: UpdateProvider {
         }
         let trimmed = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, trimmed != "{}" else { return ScanResult() }
-        guard let data = trimmed.data(using: .utf8),
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        guard let data = trimmed.data(using: .utf8), let items = Self.parse(data)
         else { return issue("Unreadable output from `npm outdated -g`.") }
+        return ScanResult(items: items, issues: [])
+    }
 
+    static func parse(_ data: Data) -> [UpdateItem]? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
         var items: [UpdateItem] = []
         for (name, raw) in root {
             // npm 9+ can return an array when a package is installed in several places.
@@ -166,7 +186,7 @@ struct NpmProvider: UpdateProvider {
                 infoURL: URL(string: "https://www.npmjs.com/package/\(name)")
             ))
         }
-        return ScanResult(items: items, issues: [])
+        return items
     }
 }
 
@@ -181,15 +201,19 @@ struct MacPortsProvider: UpdateProvider {
             return issue("Could not run `port outdated`.")
         }
 
+        guard result.ok else { return issue(result.stderr.nonEmpty ?? "`port outdated` failed.") }
         let text = result.stdout
         if text.contains("No installed ports are outdated") { return ScanResult() }
+        return ScanResult(items: Self.parse(text), issues: [])
+    }
 
+    static func parse(_ output: String) -> [UpdateItem] {
         var items: [UpdateItem] = []
         // "portname       1.0.0 < 1.1.0"  (the header line is skipped by the pattern)
         let pattern = #"^(\S+)\s+([0-9][^\s<]*)\s*<\s*([0-9]\S*)"#
         let regex = try? NSRegularExpression(pattern: pattern, options: [.anchorsMatchLines])
 
-        for line in text.split(separator: "\n") {
+        for line in output.split(separator: "\n") {
             let row = String(line)
             let range = NSRange(row.startIndex..., in: row)
             guard let match = regex?.firstMatch(in: row, range: range), match.numberOfRanges == 4,
@@ -209,7 +233,7 @@ struct MacPortsProvider: UpdateProvider {
                 infoURL: URL(string: "https://ports.macports.org/port/\(name)/")
             ))
         }
-        return ScanResult(items: items, issues: [])
+        return items
     }
 }
 
@@ -226,11 +250,14 @@ struct ComposerProvider: UpdateProvider {
         ) else {
             return issue("Could not run `composer global outdated`.")
         }
-        guard let data = result.stdout.data(using: .utf8),
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let installed = root["installed"] as? [[String: Any]]
-        else { return ScanResult() }
+        guard let data = result.stdout.data(using: .utf8), let items = Self.parse(data)
+        else { return issue("Unreadable output from `composer global outdated`.") }
+        return ScanResult(items: items, issues: [])
+    }
 
+    static func parse(_ data: Data) -> [UpdateItem]? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let installed = root["installed"] as? [[String: Any]] else { return nil }
         var items: [UpdateItem] = []
         for entry in installed {
             guard let name = entry["name"] as? String,
@@ -247,6 +274,6 @@ struct ComposerProvider: UpdateProvider {
                 infoURL: URL(string: "https://packagist.org/packages/\(name)")
             ))
         }
-        return ScanResult(items: items, issues: [])
+        return items
     }
 }

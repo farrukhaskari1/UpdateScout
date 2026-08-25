@@ -9,12 +9,27 @@ struct PipxProvider: UpdateProvider {
         guard isAvailable else { return ScanResult() }
         guard let result = await Shell.runAsync("pipx", ["list", "--json"], timeout: 120),
               let data = result.stdout.data(using: .utf8),
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let venvs = root["venvs"] as? [String: Any]
+              let installed = Self.installedPackages(data)
         else {
             return issue("Could not read `pipx list --json`.")
         }
 
+        let items = await Registries.mapConcurrently(installed) { entry -> UpdateItem? in
+            guard let latest = await Registries.pypiLatest(entry.name),
+                  Version.isNewer(latest, than: entry.version)
+            else { return nil }
+            return UpdateItem(
+                source: .pipx, name: entry.name, installedVersion: entry.version,
+                latestVersion: latest, upgradeCommand: "pipx upgrade \(entry.name)",
+                infoURL: URL(string: "https://pypi.org/project/\(entry.name)/")
+            )
+        }
+        return ScanResult(items: items, issues: [])
+    }
+
+    static func installedPackages(_ data: Data) -> [PackageRef]? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let venvs = root["venvs"] as? [String: Any] else { return nil }
         var installed: [PackageRef] = []
         for (_, raw) in venvs {
             guard let venv = raw as? [String: Any],
@@ -26,20 +41,7 @@ struct PipxProvider: UpdateProvider {
             installed.append(PackageRef(name: name, version: version))
         }
 
-        let items = await Registries.mapConcurrently(installed) { entry -> UpdateItem? in
-            guard let latest = await Registries.pypiLatest(entry.name),
-                  Version.isNewer(latest, than: entry.version)
-            else { return nil }
-            return UpdateItem(
-                source: .pipx,
-                name: entry.name,
-                installedVersion: entry.version,
-                latestVersion: latest,
-                upgradeCommand: "pipx upgrade \(entry.name)",
-                infoURL: URL(string: "https://pypi.org/project/\(entry.name)/")
-            )
-        }
-        return ScanResult(items: items, issues: [])
+        return installed
     }
 }
 
@@ -50,13 +52,28 @@ struct UvToolProvider: UpdateProvider {
 
     func scan() async -> ScanResult {
         guard isAvailable else { return ScanResult() }
-        guard let result = await Shell.runAsync("uv", ["tool", "list"], timeout: 120), result.ok else {
-            return ScanResult()
+        guard let result = await Shell.runAsync("uv", ["tool", "list"], timeout: 120) else {
+            return issue("Could not run `uv tool list`.")
         }
+        guard result.ok else { return issue(result.stderr.nonEmpty ?? "`uv tool list` failed.") }
 
-        // Top-level lines look like "ruff v0.4.2"; entries beneath are indented executables.
+        let installed = Self.installedPackages(result.stdout)
+        let items = await Registries.mapConcurrently(installed) { entry -> UpdateItem? in
+            guard let latest = await Registries.pypiLatest(entry.name),
+                  Version.isNewer(latest, than: entry.version)
+            else { return nil }
+            return UpdateItem(
+                source: .uv, name: entry.name, installedVersion: entry.version,
+                latestVersion: latest, upgradeCommand: "uv tool upgrade \(entry.name)",
+                infoURL: URL(string: "https://pypi.org/project/\(entry.name)/")
+            )
+        }
+        return ScanResult(items: items, issues: [])
+    }
+
+    static func installedPackages(_ output: String) -> [PackageRef] {
         var installed: [PackageRef] = []
-        for line in result.stdout.split(separator: "\n") {
+        for line in output.split(separator: "\n") {
             guard !line.hasPrefix(" "), !line.hasPrefix("-") else { continue }
             let parts = line.split(separator: " ").map(String.init)
             guard parts.count >= 2 else { continue }
@@ -65,20 +82,7 @@ struct UvToolProvider: UpdateProvider {
             installed.append(PackageRef(name: parts[0], version: version))
         }
 
-        let items = await Registries.mapConcurrently(installed) { entry -> UpdateItem? in
-            guard let latest = await Registries.pypiLatest(entry.name),
-                  Version.isNewer(latest, than: entry.version)
-            else { return nil }
-            return UpdateItem(
-                source: .uv,
-                name: entry.name,
-                installedVersion: entry.version,
-                latestVersion: latest,
-                upgradeCommand: "uv tool upgrade \(entry.name)",
-                infoURL: URL(string: "https://pypi.org/project/\(entry.name)/")
-            )
-        }
-        return ScanResult(items: items, issues: [])
+        return installed
     }
 }
 
@@ -149,9 +153,13 @@ struct PipProvider: UpdateProvider {
             return issue("Could not run `\(tool) list --outdated`.")
         }
         guard let data = result.stdout.data(using: .utf8),
-              let entries = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]
-        else { return ScanResult() }
+              let items = Self.parse(data, tool: tool)
+        else { return issue("Unreadable output from `\(tool) list --outdated`.") }
+        return ScanResult(items: items, issues: [])
+    }
 
+    static func parse(_ data: Data, tool: String = "pip3") -> [UpdateItem]? {
+        guard let entries = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return nil }
         var items: [UpdateItem] = []
         for entry in entries {
             guard let name = entry["name"] as? String,
@@ -167,6 +175,6 @@ struct PipProvider: UpdateProvider {
                 infoURL: URL(string: "https://pypi.org/project/\(name)/")
             ))
         }
-        return ScanResult(items: items, issues: [])
+        return items
     }
 }

@@ -122,13 +122,22 @@ struct CustomSourceProvider: UpdateProvider {
         }
         let text = output.stdout + "\n" + output.stderr
 
+        let parsed: ScanResult
         if let pattern = source.rowPattern {
-            return tableMode(source, text: text, pattern: pattern)
+            parsed = tableMode(source, text: text, pattern: pattern)
+        } else if let pattern = source.currentPattern {
+            parsed = await singleBinaryMode(source, text: text, pattern: pattern)
+        } else {
+            return issue("\(source.title): needs either `rowPattern` or `currentPattern`.")
         }
-        if let pattern = source.currentPattern {
-            return await singleBinaryMode(source, text: text, pattern: pattern)
+
+        // Some outdated commands intentionally exit non-zero when they found
+        // updates. Accept useful parsed output, but surface an otherwise empty
+        // non-zero response as a failure.
+        if !output.ok, parsed.items.isEmpty, parsed.issues.isEmpty {
+            return issue("\(source.title): \(output.stderr.nonEmpty ?? "command failed with exit code \(output.exitCode)")")
         }
-        return issue("\(source.title): needs either `rowPattern` or `currentPattern`.")
+        return parsed
     }
 
     /// The tool reported its own outdated list; pull rows out of it.

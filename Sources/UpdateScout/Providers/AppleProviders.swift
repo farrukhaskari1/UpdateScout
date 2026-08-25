@@ -19,12 +19,17 @@ struct MacAppStoreProvider: UpdateProvider {
         // needs it and the first call walks every .app on disk.
         _ = await Shell.offPool { AppInventory.scan() }
 
+        let items = Self.parse(result.stdout, iconPath: AppInventory.matchPath(for:))
+        return ScanResult(items: items, issues: [])
+    }
+
+    static func parse(_ output: String, iconPath: (String) -> String? = { _ in nil }) -> [UpdateItem] {
         var items: [UpdateItem] = []
         // Lines look like: "497799835  Xcode (15.0 -> 15.1)"
         let pattern = #"^\s*(\d+)\s+(.+?)\s+\(([^)]*?)\s*(?:->|→)\s*([^)]*?)\)\s*$"#
         let regex = try? NSRegularExpression(pattern: pattern, options: [.anchorsMatchLines])
 
-        for line in result.stdout.split(separator: "\n") {
+        for line in output.split(separator: "\n") {
             let text = String(line)
             let range = NSRange(text.startIndex..., in: text)
             guard let match = regex?.firstMatch(in: text, range: range), match.numberOfRanges == 5,
@@ -43,10 +48,10 @@ struct MacAppStoreProvider: UpdateProvider {
                 latestVersion: String(text[newRange]).trimmingCharacters(in: .whitespaces),
                 upgradeCommand: "mas upgrade \(appID)",
                 infoURL: URL(string: "macappstore://apps.apple.com/app/id\(appID)"),
-                iconPath: AppInventory.matchPath(for: name)
+                iconPath: iconPath(name)
             ))
         }
-        return ScanResult(items: items, issues: [])
+        return items
     }
 }
 
@@ -66,6 +71,9 @@ struct SystemUpdateProvider: UpdateProvider {
         ) else {
             return issue("Could not run `softwareupdate --list`.")
         }
+        guard result.ok else {
+            return issue((result.stderr + result.stdout).nonEmpty ?? "`softwareupdate --list` failed.")
+        }
 
         let combined = result.stdout + "\n" + result.stderr
         var items: [UpdateItem] = []
@@ -80,7 +88,18 @@ struct SystemUpdateProvider: UpdateProvider {
         // Entries look like:
         //   * Label: macOS Sonoma 14.5-23F79
         //   	Title: macOS Sonoma, Version: 14.5, Size: 6000000KiB, Recommended: YES, Action: restart,
-        let lines = hasPatches ? combined.split(separator: "\n").map(String.init) : []
+        let itemsFromList = Self.parseListOutput(hasPatches ? combined : "", installedOS: installedOS)
+        items.append(contentsOf: itemsFromList)
+
+        if let upgrade = await majorUpgrade(installedOS: installedOS) {
+            items.insert(upgrade, at: 0)
+        }
+        return ScanResult(items: items, issues: [])
+    }
+
+    static func parseListOutput(_ output: String, installedOS: String) -> [UpdateItem] {
+        let lines = output.split(separator: "\n").map(String.init)
+        var items: [UpdateItem] = []
         var pendingLabel: String?
 
         for line in lines {
@@ -116,10 +135,7 @@ struct SystemUpdateProvider: UpdateProvider {
             pendingLabel = nil
         }
 
-        if let upgrade = await majorUpgrade(installedOS: installedOS) {
-            items.insert(upgrade, at: 0)
-        }
-        return ScanResult(items: items, issues: [])
+        return items
     }
 
     /// `softwareupdate --list` deliberately hides whole-number macOS upgrades —
@@ -135,8 +151,24 @@ struct SystemUpdateProvider: UpdateProvider {
 
         // Lines look like:
         //   * Title: macOS Sequoia, Version: 15.6, Size: 15181740KiB, Build: 24G84
+        guard let best = Self.bestFullInstaller(in: result.stdout + "\n" + result.stderr) else { return nil }
+
+        guard Version.isNewer(best.version, than: installedOS) else { return nil }
+        guard Version.bump(from: installedOS, to: best.version) == .major else { return nil }
+
+        return UpdateItem(
+            source: .macOSSystem,
+            name: "\(best.title) (major upgrade)",
+            installedVersion: installedOS,
+            latestVersion: best.version,
+            upgradeCommand: "softwareupdate --fetch-full-installer --full-installer-version \(best.version)",
+            infoURL: URL(string: "x-apple.systempreferences:com.apple.preferences.softwareupdate")
+        )
+    }
+
+    static func bestFullInstaller(in output: String) -> (version: String, title: String)? {
         var best: (version: String, title: String)?
-        for line in (result.stdout + "\n" + result.stderr).split(separator: "\n") {
+        for line in output.split(separator: "\n") {
             let text = line.trimmingCharacters(in: .whitespaces)
             guard text.hasPrefix("* Title:") else { continue }
 
@@ -161,18 +193,6 @@ struct SystemUpdateProvider: UpdateProvider {
             }
         }
 
-        guard let best, Version.isNewer(best.version, than: installedOS) else { return nil }
-        // Only surface a genuine major jump; point releases already come through
-        // the regular `--list` path above.
-        guard Version.bump(from: installedOS, to: best.version) == .major else { return nil }
-
-        return UpdateItem(
-            source: .macOSSystem,
-            name: "\(best.title) (major upgrade)",
-            installedVersion: installedOS,
-            latestVersion: best.version,
-            upgradeCommand: "softwareupdate --fetch-full-installer --full-installer-version \(best.version)",
-            infoURL: URL(string: "x-apple.systempreferences:com.apple.preferences.softwareupdate")
-        )
+        return best
     }
 }

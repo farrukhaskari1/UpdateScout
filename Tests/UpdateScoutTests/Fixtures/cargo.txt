@@ -1,0 +1,4 @@
+ripgrep v14.1.0:
+    rg
+custom-tool v0.1.0 (path+file:///tmp/custom):
+    custom-tool

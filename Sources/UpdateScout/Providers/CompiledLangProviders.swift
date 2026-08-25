@@ -7,13 +7,28 @@ struct CargoProvider: UpdateProvider {
 
     func scan() async -> ScanResult {
         guard isAvailable else { return ScanResult() }
-        guard let result = await Shell.runAsync("cargo", ["install", "--list"], timeout: 120), result.ok else {
-            return ScanResult()
+        guard let result = await Shell.runAsync("cargo", ["install", "--list"], timeout: 120) else {
+            return issue("Could not run `cargo install --list`.")
         }
+        guard result.ok else { return issue(result.stderr.nonEmpty ?? "`cargo install --list` failed.") }
 
-        // Top-level lines: "ripgrep v14.1.0:" followed by indented binary names.
+        let installed = Self.installedPackages(result.stdout)
+        let items = await Registries.mapConcurrently(installed) { entry -> UpdateItem? in
+            guard let latest = await Registries.cratesLatest(entry.name),
+                  Version.isNewer(latest, than: entry.version)
+            else { return nil }
+            return UpdateItem(
+                source: .cargo, name: entry.name, installedVersion: entry.version,
+                latestVersion: latest, upgradeCommand: "cargo install \(entry.name) --force",
+                infoURL: URL(string: "https://crates.io/crates/\(entry.name)")
+            )
+        }
+        return ScanResult(items: items, issues: [])
+    }
+
+    static func installedPackages(_ output: String) -> [PackageRef] {
         var installed: [PackageRef] = []
-        for line in result.stdout.split(separator: "\n") {
+        for line in output.split(separator: "\n") {
             guard !line.hasPrefix(" "), !line.hasPrefix("\t") else { continue }
             let cleaned = line.replacingOccurrences(of: ":", with: "")
             let parts = cleaned.split(separator: " ").map(String.init)
@@ -23,20 +38,7 @@ struct CargoProvider: UpdateProvider {
             installed.append(PackageRef(name: parts[0], version: String(parts[1].dropFirst())))
         }
 
-        let items = await Registries.mapConcurrently(installed) { entry -> UpdateItem? in
-            guard let latest = await Registries.cratesLatest(entry.name),
-                  Version.isNewer(latest, than: entry.version)
-            else { return nil }
-            return UpdateItem(
-                source: .cargo,
-                name: entry.name,
-                installedVersion: entry.version,
-                latestVersion: latest,
-                upgradeCommand: "cargo install \(entry.name) --force",
-                infoURL: URL(string: "https://crates.io/crates/\(entry.name)")
-            )
-        }
-        return ScanResult(items: items, issues: [])
+        return installed
     }
 }
 

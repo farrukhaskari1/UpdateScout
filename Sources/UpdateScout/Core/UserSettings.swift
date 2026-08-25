@@ -3,12 +3,12 @@ import Combine
 import ServiceManagement
 
 /// Persisted preferences. Reads are thread-safe (UserDefaults is); writes happen on the main actor.
+@MainActor
 final class UserSettings: ObservableObject {
 
     static let shared = UserSettings()
 
     private enum Key {
-        static let collapsedSources = "collapsedSources"
         static let disabledSources = "disabledSources"
         static let ignoredBundleIDs = "ignoredBundleIDs"
         static let lastScanDate = "lastScanDate"
@@ -19,17 +19,11 @@ final class UserSettings: ObservableObject {
 
     private let defaults = UserDefaults.standard
 
-    /// Sources that are off by default: pip touches system Python, and macOS
-    /// system updates are noisy for people who update via System Settings.
+    /// pip is off by default because it can target an externally-managed Python.
     private static let defaultDisabled: Set<String> = [SourceKind.pip.rawValue]
 
     @Published var disabledSources: Set<String> {
         didSet { defaults.set(Array(disabledSources), forKey: Key.disabledSources) }
-    }
-
-    /// Sections the user has folded shut. Remembered across launches.
-    @Published var collapsedSources: Set<String> {
-        didSet { defaults.set(Array(collapsedSources), forKey: Key.collapsedSources) }
     }
 
     @Published var showBadgeCount: Bool {
@@ -48,40 +42,25 @@ final class UserSettings: ObservableObject {
         didSet { defaults.set(lastScanDate?.timeIntervalSince1970 ?? 0, forKey: Key.lastScanDate) }
     }
 
+    @Published private(set) var ignoredBundleIDs: Set<String> {
+        didSet { defaults.set(Array(ignoredBundleIDs), forKey: Key.ignoredBundleIDs) }
+    }
+
+    @Published private(set) var settingsError: String?
+
     private init() {
         if let stored = defaults.array(forKey: Key.disabledSources) as? [String] {
             disabledSources = Set(stored)
         } else {
             disabledSources = Self.defaultDisabled
         }
-        collapsedSources = Set(defaults.array(forKey: Key.collapsedSources) as? [String] ?? [])
         showBadgeCount = defaults.object(forKey: Key.showBadgeCount) as? Bool ?? true
         notifyOnNew = defaults.object(forKey: Key.notifyOnNew) as? Bool ?? false
         refreshIntervalMinutes = defaults.object(forKey: Key.refreshIntervalMinutes) as? Int ?? 60
         let stamp = defaults.double(forKey: Key.lastScanDate)
         lastScanDate = stamp > 0 ? Date(timeIntervalSince1970: stamp) : nil
-    }
-
-    /// Keyed by `SourceGroup.id`, which is a source's raw value for built-ins
-    /// and `custom|<tool id>` for user-defined tools.
-    func isCollapsed(_ groupID: String) -> Bool {
-        collapsedSources.contains(groupID)
-    }
-
-    func toggleCollapsed(_ groupID: String) {
-        if collapsedSources.contains(groupID) {
-            collapsedSources.remove(groupID)
-        } else {
-            collapsedSources.insert(groupID)
-        }
-    }
-
-    func setAllCollapsed(_ collapsed: Bool, groupIDs: [String]) {
-        if collapsed {
-            collapsedSources.formUnion(groupIDs)
-        } else {
-            collapsedSources.subtract(groupIDs)
-        }
+        ignoredBundleIDs = Set(defaults.array(forKey: Key.ignoredBundleIDs) as? [String] ?? [])
+        settingsError = nil
     }
 
     func isEnabled(_ source: SourceKind) -> Bool {
@@ -93,20 +72,15 @@ final class UserSettings: ObservableObject {
         else { disabledSources.insert(source.rawValue) }
     }
 
-    // MARK: - Per-app ignore list (read from any thread)
+    // MARK: - Per-app ignore list
 
     func isIgnored(_ bundleID: String) -> Bool {
         guard !bundleID.isEmpty else { return false }
-        let list = defaults.array(forKey: Key.ignoredBundleIDs) as? [String] ?? []
-        return list.contains(bundleID)
+        return ignoredBundleIDs.contains(bundleID)
     }
 
     func ignore(bundleID: String) {
-        var list = defaults.array(forKey: Key.ignoredBundleIDs) as? [String] ?? []
-        guard !list.contains(bundleID) else { return }
-        list.append(bundleID)
-        defaults.set(list, forKey: Key.ignoredBundleIDs)
-        objectWillChange.send()
+        ignoredBundleIDs.insert(bundleID)
     }
 
     // MARK: - Launch at login
@@ -121,12 +95,15 @@ final class UserSettings: ObservableObject {
     }
 
     func setLaunchAtLogin(_ enabled: Bool) {
+        settingsError = nil
         do {
             if enabled { try SMAppService.mainApp.register() }
             else { try SMAppService.mainApp.unregister() }
         } catch {
-            NSLog("UpdateScout: could not change login item — \(error.localizedDescription)")
+            settingsError = "Could not change the login item: \(error.localizedDescription)"
         }
         refreshLaunchAtLogin()
     }
+
+    func clearError() { settingsError = nil }
 }

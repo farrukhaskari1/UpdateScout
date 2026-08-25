@@ -14,30 +14,35 @@ struct UpdateRow: View {
 
     var body: some View {
         HStack(spacing: Theme.Space.inner) {
-            SourceIcon(item: item)
+            Button(action: primaryAction) {
+                HStack(spacing: Theme.Space.inner) {
+                    SourceIcon(item: item)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(item.name)
-                    .font(Theme.Font.body)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.name)
+                            .font(Theme.Font.body)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
 
-                versionLine
+                        versionLine
+                    }
+
+                    Spacer(minLength: Theme.Space.inner)
+                }
+                .contentShape(Rectangle())
             }
-
-            Spacer(minLength: Theme.Space.inner)
+            .buttonStyle(.plain)
+            .accessibilityLabel(item.name)
+            .accessibilityValue(item.versionSummary)
+            .accessibilityHint(helpText)
 
             trailing
                 .animation(.easeInOut(duration: 0.12), value: hovering)
         }
         .padding(.horizontal, Theme.Space.edge)
         .padding(.vertical, Theme.Space.inner)
-        .contentShape(Rectangle())
         .background(hovering ? Theme.hover : .clear)
         .onHover { hovering = $0 }
-        .onTapGesture {
-            if item.upgradeCommand != nil { onCopy() } else { onOpen() }
-        }
         .contextMenu { rowMenu }
         .help(helpText)
     }
@@ -125,36 +130,15 @@ struct UpdateRow: View {
         return "Update this one from inside the app — click to open its page"
     }
 
+    private func primaryAction() {
+        if item.upgradeCommand != nil { onCopy() } else { onOpen() }
+    }
+
     private var bumpColor: Color {
         switch item.bump {
         case .major: return .orange
         case .minor: return .accentColor
         case .patch: return .secondary
         }
-    }
-}
-
-/// Compact hover action button used inside a row.
-private struct RowButton: View {
-    let systemName: String
-    let help: String
-    let action: () -> Void
-
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(hovering ? Color.primary : Color.secondary)
-                .frame(width: 20, height: 20)
-                .background(
-                    RoundedRectangle(cornerRadius: 5, style: .continuous)
-                        .fill(hovering ? Color.primary.opacity(0.1) : .clear)
-                )
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .help(help)
     }
 }

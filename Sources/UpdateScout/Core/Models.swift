@@ -150,31 +150,10 @@ struct UpdateItem: Identifiable, Hashable, Sendable {
     var bump: Version.Bump { Version.bump(from: installedVersion, to: latestVersion) }
 
     var versionSummary: String { "\(installedVersion) → \(latestVersion)" }
-}
 
-/// The Apps / Tools split in the filter bar.
-enum MenuScope: String, CaseIterable, Identifiable {
-    case all, apps, tools
-
-    var id: String { rawValue }
-
-    var label: String {
-        switch self {
-        case .all:   return "All"
-        case .apps:  return "Apps"
-        case .tools: return "Tools"
-        }
-    }
-
-    func includes(_ item: UpdateItem) -> Bool { includes(sourceKind: item.source) }
-
-    func includes(sourceKind: SourceKind) -> Bool {
-        switch self {
-        case .all:   return true
-        case .apps:  return sourceKind.isApplication
-        case .tools: return !sourceKind.isApplication
-        }
-    }
+    /// Includes the offered version so a newer release of an already-outdated
+    /// package can trigger a fresh notification.
+    var notificationID: String { "\(id):\(latestVersion)" }
 }
 
 /// Updates from one source, ready for a `ForEach`.
@@ -260,5 +239,13 @@ extension UpdateProvider {
     /// We deliberately didn't check, and here's why.
     func skipped(_ message: String) -> ScanResult {
         ScanResult(items: [], issues: [ScanIssue(source: kind, message: message, severity: .skipped)])
+    }
+}
+
+extension String {
+    /// Trimmed text when useful for a user-facing diagnostic.
+    var nonEmpty: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }

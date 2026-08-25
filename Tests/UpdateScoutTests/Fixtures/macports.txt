@@ -1,0 +1,3 @@
+The following installed ports are outdated:
+git                    2.45.0 < 2.46.0
+curl                   8.8.0 < 8.9.0

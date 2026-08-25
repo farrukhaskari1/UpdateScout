@@ -4,17 +4,17 @@ import AppKit
 @MainActor
 struct MenuView: View {
     @EnvironmentObject private var store: UpdateStore
-    @ObservedObject private var settings = UserSettings.shared
 
     @State private var query = ""
-    @State private var scope: MenuScope = .all
+    @State private var isSearchPresented = false
     @State private var showingSettings = false
     @State private var copiedItemID: String?
+    @FocusState private var isSearchFocused: Bool
 
     var body: some View {
         // Grouped once per render: filtering, grouping and sorting the whole
         // item list is not something to repeat for each subview that asks.
-        let groups = store.groupedItems(matching: query, scope: scope)
+        let groups = store.groupedItems(matching: query)
 
         VStack(spacing: 0) {
             header
@@ -24,7 +24,6 @@ struct MenuView: View {
                 SettingsPane()
                     .environmentObject(store)
             } else {
-                if !store.items.isEmpty { filterBar(groups) }
                 Divider()
                 content(groups)
             }
@@ -33,44 +32,60 @@ struct MenuView: View {
             footer(groups)
         }
         .frame(width: 420)
+        .onChange(of: store.isScanning) { scanning in
+            if scanning { closeSearch() }
+        }
     }
 
     // MARK: - Header
 
     private var header: some View {
         HStack(spacing: Theme.Space.inner) {
-            statusBadge
+            if isSearchPresented && !showingSettings {
+                searchField
+                    .transition(.opacity)
+            } else {
+                statusBadge
 
-            VStack(alignment: .leading, spacing: 1) {
-                Text(headline)
-                    .font(Theme.Font.title)
-                Text(subhead)
-                    .font(Theme.Font.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(headline)
+                        .font(Theme.Font.title)
+                    Text(subhead)
+                        .font(Theme.Font.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: Theme.Space.tight)
             }
 
-            Spacer(minLength: Theme.Space.tight)
+            if !showingSettings && !store.isScanning && (isSearchPresented || !store.items.isEmpty) {
+                IconButton(
+                    systemName: isSearchPresented ? "xmark" : "magnifyingglass",
+                    help: isSearchPresented ? "Close search" : "Search updates"
+                ) {
+                    isSearchPresented ? closeSearch() : openSearch()
+                }
+            }
 
             if store.isScanning {
-                ProgressView()
+                Button("Stop", systemImage: "stop.fill", action: store.cancelScan)
+                    .buttonStyle(.bordered)
                     .controlSize(.small)
-                    .scaleEffect(0.7)
-                    .frame(width: 16)
-            }
-
-            IconButton(
-                systemName: store.isScanning ? "xmark" : "arrow.clockwise",
-                help: store.isScanning ? "Stop checking" : "Check for updates now"
-            ) {
-                if store.isScanning { store.cancelScan() } else { store.refresh() }
+                    .help("Stop checking for updates")
+            } else {
+                IconButton(
+                    systemName: "arrow.clockwise",
+                    help: "Check for updates now",
+                    action: store.refresh
+                )
             }
 
             IconButton(
                 systemName: showingSettings ? "chevron.backward" : "gearshape",
                 help: showingSettings ? "Back to updates" : "Settings"
             ) {
-                withAnimation(.easeInOut(duration: 0.15)) { showingSettings.toggle() }
+                toggleSettings()
             }
         }
         .padding(.horizontal, Theme.Space.edge)
@@ -82,18 +97,39 @@ struct MenuView: View {
         RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous)
             .fill(statusTint.opacity(0.15))
             .frame(width: Theme.iconSide, height: Theme.iconSide)
-            .overlay(
-                Image(systemName: store.items.isEmpty ? "checkmark" : "arrow.down")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(statusTint)
-            )
+            .overlay {
+                if store.isScanning {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .tint(statusTint)
+                } else {
+                    Image(systemName: statusSymbol)
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(statusTint)
+                }
+            }
+            .accessibilityHidden(true)
     }
 
-    private var statusTint: Color { store.items.isEmpty ? .green : .accentColor }
+    private var statusTint: Color {
+        if store.isScanning { return .accentColor }
+        if store.hasFailures { return .orange }
+        if !store.hasCompletedScanThisLaunch { return .secondary }
+        return store.items.isEmpty ? .green : .accentColor
+    }
+
+    private var statusSymbol: String {
+        if store.hasFailures { return "exclamationmark" }
+        if !store.hasCompletedScanThisLaunch { return "questionmark" }
+        return store.items.isEmpty ? "checkmark" : "arrow.down"
+    }
 
     private var headline: String {
-        if store.items.isEmpty { return store.isScanning ? "Checking…" : "Up to date" }
-        return store.items.count == 1 ? "1 update" : "\(store.items.count) updates"
+        if store.isScanning { return "Checking for updates" }
+        if !store.items.isEmpty { return store.items.count == 1 ? "1 update" : "\(store.items.count) updates" }
+        if !store.hasCompletedScanThisLaunch { return "Not checked" }
+        if store.hasFailures { return "Check incomplete" }
+        return "Up to date"
     }
 
     private var subhead: String {
@@ -102,7 +138,7 @@ struct MenuView: View {
         if store.applicationCount > 0 { pieces.append("\(store.applicationCount) app\(store.applicationCount == 1 ? "" : "s")") }
         if store.toolCount > 0 { pieces.append("\(store.toolCount) tool\(store.toolCount == 1 ? "" : "s")") }
         if let last = store.lastScan {
-            pieces.append("checked \(Self.relative.localizedString(for: last, relativeTo: Date()))")
+            pieces.append("checked \(Self.relative.localizedString(for: last, relativeTo: .now))")
         } else if pieces.isEmpty {
             pieces.append("not checked yet")
         }
@@ -115,66 +151,22 @@ struct MenuView: View {
         return formatter
     }()
 
-    // MARK: - Filter bar
+    // MARK: - Search
 
-    /// Two full-width rows rather than one cramped line. Golden Gate's toolbar
-    /// guidance is uniformity and legibility over density, and three controls
-    /// fighting for 420pt was the opposite of both.
-    private func filterBar(_ groups: [SourceGroup]) -> some View {
-        VStack(spacing: Theme.Space.inner) {
-            searchField
-
-            HStack(spacing: Theme.Space.inner) {
-                Picker("", selection: $scope) {
-                    ForEach(MenuScope.allCases) { option in
-                        Text(option.label).tag(option)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .controlSize(.regular)
-
-                let ids = groups.map(\.id)
-                let collapsedAll = !ids.isEmpty && ids.allSatisfy { settings.isCollapsed($0) }
-
-                IconButton(
-                    systemName: collapsedAll ? "chevron.down" : "chevron.up",
-                    help: collapsedAll ? "Expand all sections" : "Collapse all sections"
-                ) {
-                    withAnimation(.easeInOut(duration: 0.16)) {
-                        settings.setAllCollapsed(!collapsedAll, groupIDs: ids)
-                    }
-                }
-                .disabled(ids.isEmpty)
-            }
-        }
-        .padding(.horizontal, Theme.Space.edge)
-        .padding(.bottom, Theme.Space.row)
-    }
-
-    /// Full width, with the clear button inside the field at the trailing edge
-    /// where macOS puts it — not floating between two other controls.
+    /// Search is an occasional header action, not permanent navigation. When
+    /// active it borrows the title's space and keeps the primary actions put.
     private var searchField: some View {
         HStack(spacing: Theme.Space.inner) {
             Image(systemName: "magnifyingglass")
                 .font(Theme.Font.caption)
                 .foregroundStyle(.secondary)
 
-            TextField("Search updates", text: $query)
+            TextField("Apps and tools", text: $query)
                 .textFieldStyle(.plain)
                 .font(Theme.Font.control)
-
-            if !query.isEmpty {
-                Button {
-                    query = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(Theme.Font.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("Clear search")
-            }
+                .focused($isSearchFocused)
+                .onExitCommand(perform: closeSearch)
+                .accessibilityLabel("Search updates")
         }
         .padding(.horizontal, Theme.Space.inner)
         .padding(.vertical, Theme.Space.tight + 2)
@@ -182,14 +174,14 @@ struct MenuView: View {
             RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous)
                 .fill(Theme.subtleFill)
         )
+        .frame(maxWidth: .infinity)
     }
 
     // MARK: - Content
 
     @ViewBuilder
     private func content(_ groups: [SourceGroup]) -> some View {
-        // Notes about pip belong on the Tools tab, not the Apps tab.
-        let notes = store.issues.filter { scope.includes(sourceKind: $0.source) }
+        let notes = store.issues
 
         if groups.isEmpty && notes.isEmpty {
             emptyState
@@ -200,27 +192,20 @@ struct MenuView: View {
                     if groups.isEmpty { emptyState.frame(maxWidth: .infinity) }
 
                     ForEach(groups) { group in
-                        SectionDisclosure(
+                        SourceSectionHeader(
                             title: group.title,
                             symbol: group.symbol,
-                            count: group.items.count,
-                            isCollapsed: settings.isCollapsed(group.id)
-                        ) {
-                            withAnimation(.easeInOut(duration: 0.16)) {
-                                settings.toggleCollapsed(group.id)
-                            }
-                        }
+                            count: group.items.count
+                        )
 
-                        if !settings.isCollapsed(group.id) {
-                            ForEach(group.items) { item in
-                                UpdateRow(
-                                    item: item,
-                                    justCopied: copiedItemID == item.id,
-                                    onCopy: { copy(item) },
-                                    onOpen: { store.openInfo(for: item) },
-                                    onIgnore: { store.ignore(item) }
-                                )
-                            }
+                        ForEach(group.items) { item in
+                            UpdateRow(
+                                item: item,
+                                justCopied: copiedItemID == item.id,
+                                onCopy: { copy(item) },
+                                onOpen: { store.openInfo(for: item) },
+                                onIgnore: { store.ignore(item) }
+                            )
                         }
                     }
 
@@ -257,21 +242,20 @@ struct MenuView: View {
     }
 
     private var emptyTitle: String {
-        if store.isScanning { return "Checking…" }
+        if store.isScanning { return "Checking for updates" }
         if !store.items.isEmpty { return "Nothing to show" }
+        if store.hasFailures { return "No updates found — some checks failed" }
+        if !store.hasCompletedScanThisLaunch { return "Ready to check" }
         return "Everything is up to date"
     }
 
     private var emptyDetail: String {
         if store.isScanning { return store.progressLabel }
         if !store.items.isEmpty {
-            // The list can be emptied by the search field or by the scope
-            // picker, and those want different sentences.
-            if query.isEmpty { return "No \(scope.label.lowercased()) need updating right now." }
             return "Nothing matches “\(query)”."
         }
         guard let last = store.lastScan else { return "" }
-        return "Last checked \(Self.relative.localizedString(for: last, relativeTo: Date()))."
+        return "Last checked \(Self.relative.localizedString(for: last, relativeTo: .now))."
     }
 
     // MARK: - Notes (skips and failures)
@@ -318,8 +302,7 @@ struct MenuView: View {
     // MARK: - Footer
 
     private func footer(_ groups: [SourceGroup]) -> some View {
-        // Copy what's on screen, not everything: with the scope set to Apps,
-        // copying the tool commands too would be a nasty surprise.
+        // During a search, copy only the commands in the visible result set.
         let visible = showingSettings
             ? []
             : groups.flatMap(\.items).filter { $0.upgradeCommand != nil }
@@ -361,91 +344,29 @@ struct MenuView: View {
         store.copyCommand(for: item)
         withAnimation(.easeInOut(duration: 0.15)) { copiedItemID = item.id }
         Task {
-            try? await Task.sleep(nanoseconds: 1_400_000_000)
+            try? await Task.sleep(for: .seconds(1.4))
             if copiedItemID == item.id {
                 withAnimation(.easeInOut(duration: 0.15)) { copiedItemID = nil }
             }
         }
     }
-}
 
-// MARK: - Section header
-
-/// A whole-width button, so the entire header row toggles the section rather
-/// than only the chevron.
-private struct SectionDisclosure: View {
-    let title: String
-    let symbol: String
-    let count: Int
-    let isCollapsed: Bool
-    let toggle: () -> Void
-
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: toggle) {
-            HStack(spacing: Theme.Space.inner) {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .rotationEffect(.degrees(isCollapsed ? 0 : 90))
-                    // Occupies the icon column so the label lines up with the
-                    // row names underneath it.
-                    .frame(width: Theme.iconSide, alignment: .center)
-
-                Text(title)
-                    .font(Theme.Font.label)
-                    .textCase(.uppercase)
-                    .tracking(0.6)
-                    .foregroundStyle(.secondary)
-
-                Text("\(count)")
-                    .font(Theme.Font.label)
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, Theme.Space.tight + 1)
-                    .padding(.vertical, 1)
-                    .background(Capsule().fill(Theme.subtleFill))
-
-                Spacer()
-
-                Image(systemName: symbol)
-                    .font(Theme.Font.caption)
-                    .foregroundStyle(.tertiary)
-            }
-            .padding(.horizontal, Theme.Space.edge)
-            .padding(.vertical, Theme.Space.inner)
-            .contentShape(Rectangle())
-            .background(hovering ? Theme.hover : .clear)
+    private func openSearch() {
+        withAnimation(.easeInOut(duration: 0.15)) { isSearchPresented = true }
+        Task {
+            await Task.yield()
+            isSearchFocused = true
         }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
     }
-}
 
-// MARK: - Toolbar button
+    private func closeSearch() {
+        isSearchFocused = false
+        query = ""
+        withAnimation(.easeInOut(duration: 0.15)) { isSearchPresented = false }
+    }
 
-private struct IconButton: View {
-    let systemName: String
-    let help: String
-    let action: () -> Void
-
-    @Environment(\.isEnabled) private var isEnabled
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(isEnabled ? Color.secondary : Theme.disabledLabel)
-                .frame(width: Theme.iconSide, height: Theme.iconSide)
-                .background(
-                    RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous)
-                        .fill(hovering && isEnabled ? Theme.hover : .clear)
-                )
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .help(help)
+    private func toggleSettings() {
+        if !showingSettings { closeSearch() }
+        withAnimation(.easeInOut(duration: 0.15)) { showingSettings.toggle() }
     }
 }

@@ -6,6 +6,8 @@ struct SettingsPane: View {
     @EnvironmentObject private var store: UpdateStore
     @ObservedObject private var settings = UserSettings.shared
     @State private var customSourceStatus = ""
+    @State private var launchAtLogin = false
+    @State private var fileError: String?
 
     // Dismissal is the header chevron's job — this pane doesn't need to know.
     private let intervals = [30, 60, 180, 360, 720, 1440]
@@ -17,6 +19,12 @@ struct SettingsPane: View {
                 behaviour
                 customTools
                 pinnedApps
+                if let errorMessage {
+                    Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+                        .font(Theme.Font.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             .padding(.horizontal, Theme.Space.edge)
             .padding(.vertical, Theme.Space.edge)
@@ -27,7 +35,7 @@ struct SettingsPane: View {
     // MARK: - Sections
 
     private var sources: some View {
-        section("Sources") {
+        SettingsSection(title: "Sources") {
             ForEach(store.availableSources) { entry in
                 Toggle(isOn: binding(for: entry.kind)) {
                     HStack(spacing: Theme.Space.tight + 1) {
@@ -47,7 +55,7 @@ struct SettingsPane: View {
     }
 
     private var behaviour: some View {
-        section("Behaviour") {
+        SettingsSection(title: "Behaviour") {
             Toggle("Show count in the menu bar", isOn: $settings.showBadgeCount)
                 .toggleStyle(.checkbox)
                 .font(Theme.Font.caption)
@@ -56,13 +64,17 @@ struct SettingsPane: View {
                 .toggleStyle(.checkbox)
                 .font(Theme.Font.caption)
 
-            Toggle("Launch at login", isOn: Binding(
-                get: { settings.launchAtLogin },
-                set: { settings.setLaunchAtLogin($0) }
-            ))
-            .toggleStyle(.checkbox)
-            .font(Theme.Font.caption)
-            .onAppear { settings.refreshLaunchAtLogin() }
+            Toggle("Launch at login", isOn: $launchAtLogin)
+                .toggleStyle(.checkbox)
+                .font(Theme.Font.caption)
+                .onAppear {
+                    settings.refreshLaunchAtLogin()
+                    launchAtLogin = settings.launchAtLogin
+                }
+                .onChange(of: launchAtLogin) { enabled in
+                    settings.setLaunchAtLogin(enabled)
+                    launchAtLogin = settings.launchAtLogin
+                }
 
             HStack(spacing: Theme.Space.inner) {
                 Text("Check every")
@@ -84,7 +96,7 @@ struct SettingsPane: View {
     }
 
     private var customTools: some View {
-        section("Custom CLI tools") {
+        SettingsSection(title: "Custom CLI tools") {
             Text("Teach UpdateScout about any tool by declaring how to read its version. No rebuild needed — the file is re-read on every scan.")
                 .font(Theme.Font.caption)
                 .foregroundStyle(.secondary)
@@ -113,7 +125,7 @@ struct SettingsPane: View {
     }
 
     private var pinnedApps: some View {
-        section("Pinned GitHub apps") {
+        SettingsSection(title: "Pinned GitHub apps") {
             Text("Apps without a Sparkle feed can be tracked by mapping their bundle ID to a GitHub repo.")
                 .font(Theme.Font.caption)
                 .foregroundStyle(.secondary)
@@ -126,18 +138,6 @@ struct SettingsPane: View {
     }
 
     // MARK: - Helpers
-
-    @ViewBuilder
-    private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: Theme.Space.inner) {
-            Text(title)
-                .font(Theme.Font.label)
-                .textCase(.uppercase)
-                .tracking(0.6)
-                .foregroundStyle(.tertiary)
-            content()
-        }
-    }
 
     private func binding(for kind: SourceKind) -> Binding<Bool> {
         Binding(
@@ -154,42 +154,50 @@ struct SettingsPane: View {
         }
     }
 
+    private var errorMessage: String? { fileError ?? settings.settingsError }
+
     /// Seeds the file from the bundled sample the first time, so there's
     /// something working to edit rather than an empty buffer.
     private func revealCustomSources() {
         let url = CustomSourceProvider.configURL
-        try? FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        if !FileManager.default.fileExists(atPath: url.path) {
-            let seed = Bundle.main.url(forResource: "sources.sample", withExtension: "json")
-                .flatMap { try? String(contentsOf: $0, encoding: .utf8) }
-                ?? "[\n]\n"
-            try? seed.write(to: url, atomically: true, encoding: .utf8)
+        fileError = nil
+        do {
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(), withIntermediateDirectories: true
+            )
+            if !FileManager.default.fileExists(atPath: url.path) {
+                let seed = Bundle.main.url(forResource: "sources.sample", withExtension: "json")
+                    .flatMap { try? String(contentsOf: $0, encoding: .utf8) }
+                    ?? "[\n]\n"
+                try seed.write(to: url, atomically: true, encoding: .utf8)
+            }
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+            customSourceStatus = Self.readCustomSourceStatus()
+            store.probeAvailableSources()
+        } catch {
+            fileError = "Could not create sources.json: \(error.localizedDescription)"
         }
-        NSWorkspace.shared.activateFileViewerSelecting([url])
-        // The file now exists, so the "Custom" source is no longer
-        // "not installed" — re-probe rather than leaving it greyed out.
-        customSourceStatus = Self.readCustomSourceStatus()
-        store.probeAvailableSources()
     }
 
     private func revealConfig() {
         let url = GitHubAppProvider.configURL
-        try? FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        if !FileManager.default.fileExists(atPath: url.path) {
-            let sample = """
-            {
-              "com.example.MyApp": "owner/repo"
+        fileError = nil
+        do {
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(), withIntermediateDirectories: true
+            )
+            if !FileManager.default.fileExists(atPath: url.path) {
+                let sample = """
+                {
+                  "com.example.MyApp": "owner/repo"
+                }
+                """
+                try sample.write(to: url, atomically: true, encoding: .utf8)
             }
-            """
-            try? sample.write(to: url, atomically: true, encoding: .utf8)
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+            store.probeAvailableSources()
+        } catch {
+            fileError = "Could not create github-apps.json: \(error.localizedDescription)"
         }
-        NSWorkspace.shared.activateFileViewerSelecting([url])
-        store.probeAvailableSources()
     }
 }

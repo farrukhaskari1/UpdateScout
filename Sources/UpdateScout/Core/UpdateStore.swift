@@ -11,6 +11,7 @@ final class UpdateStore: ObservableObject {
     @Published private(set) var issues: [ScanIssue] = []
     @Published private(set) var isScanning = false
     @Published private(set) var progressLabel: String = ""
+    @Published private(set) var hasCompletedScanThisLaunch = false
     @Published var lastScan: Date?
 
     /// Sources the user can toggle, and whether the backing tool exists.
@@ -23,6 +24,7 @@ final class UpdateStore: ObservableObject {
     /// Kept so a settings change can re-filter without a fresh scan.
     private var lastResult = ScanResult()
     private var settingsObserver: AnyCancellable?
+    private var notificationObserver: AnyCancellable?
 
     let settings = UserSettings.shared
 
@@ -31,8 +33,11 @@ final class UpdateStore: ObservableObject {
         [
             SystemUpdateProvider(),
             HomebrewProvider(),
-            SparkleAppProvider(),
-            GitHubAppProvider(),
+            SparkleAppProvider(
+                ignoredBundleIDs: settings.ignoredBundleIDs,
+                deduplicateHomebrewCasks: settings.isEnabled(.homebrewCask)
+            ),
+            GitHubAppProvider(ignoredBundleIDs: settings.ignoredBundleIDs),
             MacAppStoreProvider(),
             MiseProvider(),
             RustupProvider(),
@@ -64,8 +69,16 @@ final class UpdateStore: ObservableObject {
             .dropFirst()
             .sink { [weak self] _ in
                 guard let self else { return }
-                Task { @MainActor in self.apply(self.lastResult, final: false) }
+                Task { @MainActor in
+                    self.apply(self.lastResult, final: false)
+                    self.refresh()
+                }
             }
+
+        notificationObserver = settings.$notifyOnNew
+            .dropFirst()
+            .filter { $0 }
+            .sink { _ in Notifications.requestAuthorization() }
     }
 
     /// Work out which backing tools exist, off the main actor.
@@ -91,11 +104,11 @@ final class UpdateStore: ObservableObject {
 
     // MARK: - Grouping for the UI
 
-    func groupedItems(matching query: String, scope: MenuScope = .all) -> [SourceGroup] {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        var filtered = items.filter { scope.includes($0) }
+    func groupedItems(matching query: String) -> [SourceGroup] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        var filtered = items
         if !trimmed.isEmpty {
-            filtered = filtered.filter { $0.name.lowercased().contains(trimmed) }
+            filtered = filtered.filter { $0.name.localizedStandardContains(trimmed) }
         }
 
         // Grouped by `groupKey` rather than by source, so each user-defined
@@ -119,11 +132,11 @@ final class UpdateStore: ObservableObject {
 
     var applicationCount: Int { items.filter { $0.source.isApplication }.count }
     var toolCount: Int { items.count - applicationCount }
+    var hasFailures: Bool { issues.contains { $0.severity == .failed } }
 
     // MARK: - Scanning
 
-    /// Stop waiting on the current scan. The subprocess already running finishes
-    /// on its own — this just stops us collecting anything more from it.
+    /// Cancel all provider tasks and terminate their active subprocesses.
     func cancelScan() {
         scanTask?.cancel()
         scanTask = nil
@@ -135,7 +148,7 @@ final class UpdateStore: ObservableObject {
         guard !isScanning else { return }
         scanTask?.cancel()
         isScanning = true
-        progressLabel = "Starting…"
+        progressLabel = "Preparing sources"
 
         // The Homebrew provider is the only source of cask items, so it has to
         // run whenever either of its two toggles is on.
@@ -146,45 +159,72 @@ final class UpdateStore: ObservableObject {
             return settings.isEnabled(provider.kind)
         }
 
-        scanTask = Task { [weak self] in
-            guard let self else { return }
-            var collected = ScanResult()
+        scanTask = Task { [weak self] in await self?.performScan(candidates) }
+    }
 
-            // `isAvailable` stats the filesystem, so run it off the main actor.
-            let usable = await Shell.offPool { candidates.filter { $0.isAvailable } }
+    private func performScan(_ candidates: [any UpdateProvider]) async {
+        var collected = ScanResult()
+        let usable = await Shell.offPool { candidates.filter(\.isAvailable) }
+        guard !Task.isCancelled else { return }
 
-            // Homebrew must run first so the Sparkle scanner can skip cask-managed
-            // apps. Partitioning explicitly keeps the rest in declaration order —
-            // `sorted(by:)` is not stable and would shuffle them between scans.
-            let ordered = usable.filter { $0.kind == .homebrewFormula }
-                + usable.filter { $0.kind != .homebrewFormula }
+        // Homebrew remains the prerequisite for cask/Sparkle de-duplication.
+        if let homebrew = usable.first(where: { $0.kind == .homebrewFormula }) {
+            progressLabel = "Scanning Homebrew"
+            let result = await homebrew.scan()
+            guard !Task.isCancelled else { return }
+            collected = collected + result
+            apply(collected, final: false)
+        }
 
-            for provider in ordered {
-                if Task.isCancelled { break }
-                await MainActor.run { self.progressLabel = "Checking \(provider.kind.title)…" }
-                let result = await provider.scan()
-                collected = collected + result
-                // Stream partial results so the menu fills in as it goes.
-                let snapshot = collected
-                await MainActor.run { self.apply(snapshot, final: false) }
+        let remaining = usable.filter { $0.kind != .homebrewFormula }
+        collected = await scanConcurrently(remaining, appendingTo: collected)
+        guard !Task.isCancelled else { return }
+
+        apply(collected, final: true)
+        isScanning = false
+        progressLabel = ""
+        scanTask = nil
+        hasCompletedScanThisLaunch = true
+        let now = Date.now
+        lastScan = now
+        settings.lastScanDate = now
+    }
+
+    /// Independent providers run concurrently, capped to avoid launching every
+    /// package manager and network request on the machine at once.
+    private func scanConcurrently(
+        _ providers: [any UpdateProvider],
+        appendingTo initial: ScanResult,
+        limit: Int = 4
+    ) async -> ScanResult {
+        guard !providers.isEmpty else { return initial }
+        var collected = initial
+        var completed = 0
+        progressLabel = "0 of \(providers.count) sources"
+
+        await withTaskGroup(of: ScanResult.self) { group in
+            var iterator = providers.makeIterator()
+            for _ in 0..<min(limit, providers.count) {
+                guard let provider = iterator.next() else { break }
+                group.addTask { await provider.scan() }
             }
 
-            // If the user cancelled, `cancelScan` already reset the UI state —
-            // don't stamp a completion time over it.
-            if Task.isCancelled { return }
+            while let result = await group.next() {
+                guard !Task.isCancelled else {
+                    group.cancelAll()
+                    break
+                }
+                collected = collected + result
+                completed += 1
+                progressLabel = "\(completed) of \(providers.count) sources"
+                apply(collected, final: false)
 
-            // A `let` copy: `collected` is a mutable local, and capturing a var
-            // in a concurrently-executing closure is not allowed.
-            let finished = collected
-            await MainActor.run {
-                self.apply(finished, final: true)
-                self.isScanning = false
-                self.progressLabel = ""
-                let now = Date()
-                self.lastScan = now
-                self.settings.lastScanDate = now
+                if let provider = iterator.next() {
+                    group.addTask { await provider.scan() }
+                }
             }
         }
+        return collected
     }
 
     private func apply(_ result: ScanResult, final: Bool) {
@@ -196,6 +236,7 @@ final class UpdateStore: ObservableObject {
         var seen = Set<String>()
         let deduped = result.items
             .filter { settings.isEnabled($0.source) }
+            .filter { item in item.ignoreKey.map { !settings.isIgnored($0) } ?? true }
             .filter { seen.insert($0.id).inserted }
 
         items = deduped.sorted {
@@ -203,25 +244,27 @@ final class UpdateStore: ObservableObject {
                 ? $0.name.localizedStandardCompare($1.name) == .orderedAscending
                 : $0.source.rank < $1.source.rank
         }
-        issues = result.issues
+        issues = result.issues.filter { settings.isEnabled($0.source) }
 
         guard final else { return }
         notifyIfNeeded()
-        previouslySeen = Set(items.map(\.id))
+        previouslySeen = Set(items.map(\.notificationID))
     }
 
     private func notifyIfNeeded() {
         // `previouslySeen` is empty until the first completed scan, which
         // deliberately suppresses a notification for the launch-time backlog.
         guard settings.notifyOnNew, Notifications.areAvailable, !previouslySeen.isEmpty else { return }
-        let fresh = items.filter { !previouslySeen.contains($0.id) }
+        let fresh = items.filter { !previouslySeen.contains($0.notificationID) }
         guard !fresh.isEmpty else { return }
 
         let content = UNMutableNotificationContent()
         content.title = fresh.count == 1 ? "1 new update" : "\(fresh.count) new updates"
         content.body = fresh.prefix(4).map { "\($0.name) \($0.latestVersion)" }.joined(separator: ", ")
         let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(request)
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error { NSLog("UpdateScout notification failed: \(error.localizedDescription)") }
+        }
     }
 
     // MARK: - Scheduling
@@ -241,8 +284,9 @@ final class UpdateStore: ObservableObject {
     /// Called when the menu opens — cheap if we scanned recently.
     func refreshIfStale(olderThan seconds: TimeInterval = 15 * 60) {
         guard !isScanning else { return }
+        guard hasCompletedScanThisLaunch else { refresh(); return }
         guard let lastScan else { refresh(); return }
-        if Date().timeIntervalSince(lastScan) > seconds { refresh() }
+        if Date.now.timeIntervalSince(lastScan) > seconds { refresh() }
     }
 
     // MARK: - Actions

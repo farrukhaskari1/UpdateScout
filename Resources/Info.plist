@@ -33,6 +33,6 @@
 	<key>NSSupportsSuddenTermination</key>
 	<false/>
 	<key>NSHumanReadableCopyright</key>
-	<string>Local build. No warranty.</string>
+	<string>Copyright © 2026 UpdateScout contributors.</string>
 </dict>
 </plist>

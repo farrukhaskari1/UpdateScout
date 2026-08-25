@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+  <channel>
+    <item>
+      <title>Version 3.0 beta</title>
+      <sparkle:channel>beta</sparkle:channel>
+      <enclosure sparkle:version="300" sparkle:shortVersionString="3.0" />
+    </item>
+    <item>
+      <title>Version 2.5</title>
+      <link>https://example.com/releases/2.5</link>
+      <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+      <enclosure sparkle:version="250" sparkle:shortVersionString="2.5" />
+    </item>
+    <item>
+      <title>Version 2.4</title>
+      <enclosure sparkle:version="240" sparkle:shortVersionString="2.4" />
+    </item>
+  </channel>
+</rss>

@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Public-release safety
+        run: ./scripts/check-public.sh
+      - name: Toolchain
+        run: swift --version
+      - name: Strict Swift 6 tests
+        run: swift test
+      - name: Release build
+        run: swift build -c release
+      - name: Assemble and verify app bundle
+        run: |
+          ./build.sh
+          codesign --verify --deep --strict --verbose=2 dist/UpdateScout.app
+          plutil -lint dist/UpdateScout.app/Contents/Info.plist

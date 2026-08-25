@@ -31,41 +31,40 @@ struct HomebrewProvider: UpdateProvider {
             return issue("Could not run `brew outdated`.")
         }
 
-        guard let data = result.stdout.data(using: .utf8),
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else {
+        guard let data = result.stdout.data(using: .utf8) else {
             let detail = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
             return issue(detail.isEmpty ? "Unreadable output from `brew outdated`." : detail)
         }
 
+        // Warm the bundle inventory off the cooperative pool before the loop —
+        // the first `matchPath` would otherwise do a few hundred plist reads
+        // inline. Subsequent calls hit AppInventory's cache.
+        _ = await Shell.offPool { AppInventory.scan() }
+        guard let items = Self.parse(data, iconPath: AppInventory.matchPath(for:)) else {
+            return issue(result.stderr.nonEmpty ?? "Unreadable output from `brew outdated`.")
+        }
+        return ScanResult(items: items, issues: [])
+    }
+
+    /// Pure parser used by production and fixture tests.
+    static func parse(_ data: Data, iconPath: (String) -> String? = { _ in nil }) -> [UpdateItem]? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
         var items: [UpdateItem] = []
 
         for entry in root["formulae"] as? [[String: Any]] ?? [] {
             guard let name = entry["name"] as? String else { continue }
             let installed = Version.highest(entry["installed_versions"] as? [String] ?? []) ?? "—"
             let latest = entry["current_version"] as? String ?? "—"
-            guard latest != "—", Version.isNewer(latest, than: installed) else { continue }
+            guard Version.isNewer(latest, than: installed) else { continue }
             items.append(UpdateItem(
-                source: .homebrewFormula,
-                name: name,
-                installedVersion: installed,
-                latestVersion: latest,
-                upgradeCommand: "brew upgrade \(name)",
+                source: .homebrewFormula, name: name, installedVersion: installed,
+                latestVersion: latest, upgradeCommand: "brew upgrade \(name)",
                 infoURL: URL(string: "https://formulae.brew.sh/formula/\(name)")
             ))
         }
 
-        // Warm the bundle inventory off the cooperative pool before the loop —
-        // the first `matchPath` would otherwise do a few hundred plist reads
-        // inline. Subsequent calls hit AppInventory's cache.
-        if root["casks"] is [[String: Any]] {
-            _ = await Shell.offPool { AppInventory.scan() }
-        }
-
         for entry in root["casks"] as? [[String: Any]] ?? [] {
             guard let name = entry["name"] as? String else { continue }
-            // Cask entries carry `installed_versions` as either an array or a
-            // bare string depending on the Homebrew version.
             let installed = (entry["installed_versions"] as? [String]).flatMap(Version.highest)
                 ?? entry["installed_versions"] as? String
                 ?? entry["installed_version"] as? String
@@ -81,11 +80,10 @@ struct HomebrewProvider: UpdateProvider {
                 latestVersion: latest,
                 upgradeCommand: "brew upgrade --cask \(name)",
                 infoURL: URL(string: "https://formulae.brew.sh/cask/\(name)"),
-                iconPath: AppInventory.matchPath(for: name)
+                iconPath: iconPath(name)
             ))
         }
-
-        return ScanResult(items: items, issues: [])
+        return items
     }
 
     /// Record every installed cask token, normalised, for de-duplication.

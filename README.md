@@ -1,10 +1,26 @@
 # UpdateScout
 
-A macOS menu bar app that lists everything on your Mac with a newer version available — GUI apps and command line tools alike — and hands you the exact upgrade command. It never installs anything itself.
+A local-first macOS menu bar app that finds available updates for native apps
+and developer tools in one place. UpdateScout gives you the relevant upgrade
+command or release page, but never installs anything itself.
+
+> **Project status:** Source release. Build locally on macOS 13 or later. Signed
+> public binaries are planned but are not available yet.
+
+## Why UpdateScout
+
+- One always-visible list for applications and command-line tools.
+- Built-in checks for Homebrew, the Mac App Store, macOS, Sparkle, language
+  package managers, runtime managers, and more.
+- Extensible JSON-defined sources without recompiling the app.
+- Local-first operation with no account, analytics, or central inventory server.
+- Safe by design: upgrade actions are copied or opened, never executed.
+
+## Interface
 
 ```
-UpdateScout                              ⟳  ⚙
-14 updates available · 5 apps · 9 tools
+14 updates                  ⌕  ⟳  ⚙
+5 apps · 9 tools · checked 2m ago
 ─────────────────────────────────────────────
  MACOS SYSTEM                            1
  ● macOS Sequoia          15.5 → 15.6
@@ -21,11 +37,14 @@ UpdateScout                              ⟳  ⚙
  Copy all commands                     Quit
 ```
 
-Click a row to copy its upgrade command. Click the arrow to open release notes or the download page.
+Click a row to copy its upgrade command. Click the arrow to open release notes
+or the download page.
+Apps and command-line tools stay together in one always-expanded list. Search is
+kept in the top action row; click the magnifying glass only when you need it.
 
-## Build and install
+## Build from source
 
-Requires macOS 13 or later and Xcode command line tools.
+Requires macOS 13 or later and a Swift 6.2-or-newer Xcode toolchain.
 
 ```bash
 cd UpdateScout
@@ -99,7 +118,7 @@ Two shapes, matching the two ways CLI tools report versions.
 
 `latestFrom` accepts `github` (`owner/repo`), `pypi`, `crates`, or `goModule`. `{name}` in `upgrade` and `infoURL` is replaced with the package name. `requires` gates the whole entry — if that executable isn't on your PATH, the source is skipped without complaint.
 
-Patterns use ICU syntax (`(?<name>…)`), not Python's `(?P<name>…)`. Each entry becomes its own collapsible section, keyed on `id` — so renaming `title` keeps your collapse state, and two entries can't collide.
+Patterns use ICU syntax (`(?<name>…)`), not Python's `(?P<name>…)`. Each entry becomes its own section, keyed on `id`, so two entries can't collide even when they share a title.
 
 ### Why pip is off by default
 
@@ -133,13 +152,32 @@ Keys are bundle identifiers (`osascript -e 'id of app "Whatever"'` prints one). 
 
 Anonymous GitHub API access is limited to 60 requests an hour. If you pin many apps, export a `GITHUB_TOKEN` in your login environment.
 
+## Privacy and security
+
+UpdateScout inventories software locally and contacts the public services needed
+to compare versions, including vendor appcasts and package registries. It does
+not include analytics, telemetry, advertising, or an UpdateScout-operated
+server. Scan results and ignored items remain on your Mac.
+
+An optional `GITHUB_TOKEN` is read from the process environment only to increase
+GitHub API limits. It is never written to the repository or application
+preferences. Keep tokens out of config files, screenshots, logs, issues, and
+pull requests.
+
+The app does not execute upgrade commands. It only copies commands to the
+clipboard or opens an information page. Review any copied command before running
+it in Terminal.
+
+To report a vulnerability, follow [SECURITY.md](SECURITY.md). Please do not put
+sensitive security details in a public issue.
+
 ## Behaviour
 
 - **Refreshes** when you open the menu (if the last scan is over 15 minutes old) and on a background timer, hourly by default. Change the interval in Settings.
-- **Streams results** — the menu fills in provider by provider rather than waiting for the slowest one.
+- **Streams results** — Homebrew runs first for cask de-duplication, then up to four independent providers run concurrently.
 - **Dot colour** marks the size of the jump: orange for a major version, blue for minor, grey for a patch.
 - **Right-click any app row** to stop reporting it — useful for one that misreports its version or that you keep deliberately pinned. Ignored bundle IDs are stored in `UserDefaults`.
-- **The refresh button becomes a stop button** mid-scan. Cancelling stops collecting results; a subprocess already running finishes on its own.
+- **The refresh button becomes a stop button** mid-scan. Cancelling terminates active provider subprocesses and stops their network tasks.
 - **Never installs.** Every action is copy-to-clipboard or open-a-page. Nothing is executed on your behalf, and nothing ever asks for your password.
 
 ## Things worth knowing
@@ -176,6 +214,7 @@ Sources/UpdateScout/
   UI/
     Theme.swift               spacing grid, type scale, shared colours
     MenuView.swift            the panel
+    SourceSectionHeader.swift always-visible source headings
     UpdateRow.swift           one row
     AppIconLoader.swift       Finder icons, cached
     SettingsPane.swift        toggles
@@ -201,3 +240,28 @@ struct MyProvider: UpdateProvider {
 ```
 
 Add a case to `SourceKind` with a title, SF Symbol, and display rank, and it appears in Settings automatically.
+
+## Tests and releases
+
+`swift test` runs the strict Swift 6 test suite entirely offline using captured
+provider-output fixtures. `./build.sh` creates a locally ad-hoc-signed app;
+`release.sh` creates a universal Developer ID-signed and notarized build when the
+required Apple credentials are supplied through its documented environment
+variables. CI repeats tests, a release build, bundle assembly, signature
+verification, and plist validation.
+
+See [ROADMAP.md](ROADMAP.md) for the future product paths and the privacy or
+credential decisions each one requires.
+
+## Contributing
+
+Contributions are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md), and
+please keep fixtures synthetic and free of machine-specific paths, usernames,
+private registry addresses, and credentials.
+
+Maintainers preparing the first public repository or release should follow
+[PUBLISHING.md](PUBLISHING.md).
+
+## License
+
+UpdateScout is available under the [MIT License](LICENSE).

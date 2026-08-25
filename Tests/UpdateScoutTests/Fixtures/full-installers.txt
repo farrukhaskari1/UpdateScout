@@ -1,0 +1,3 @@
+Finding available software
+* Title: macOS Sonoma, Version: 14.7.6, Size: 13000000KiB, Build: 23H626
+* Title: macOS Sequoia, Version: 15.6, Size: 15000000KiB, Build: 24G84

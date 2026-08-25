@@ -126,4 +126,4 @@ done
 [[ $count -eq 0 ]] && printf '  %snone found%s\n' "$DIM" "$RESET"
 printf '\n  %sThe app fetches each of these feeds and compares versions —\n  this script only lists them.%s\n' "$DIM" "$RESET"
 
-printf '\n%sDone.%s Paste this output back into the chat for a read.\n' "$BOLD" "$RESET"
+printf '\n%sDone.%s Review and redact paths, app names, and feed URLs before sharing this output.\n' "$BOLD" "$RESET"

@@ -1,0 +1,10 @@
+{
+  "formulae": [
+    {"name":"ripgrep","installed_versions":["14.0.0","14.1.0"],"current_version":"14.1.1"},
+    {"name":"current-tool","installed_versions":["2.0.0"],"current_version":"2.0.0"}
+  ],
+  "casks": [
+    {"name":"raycast","installed_versions":"1.82.0","current_version":"1.85.0"},
+    {"name":"self-updater","installed_versions":["latest"],"current_version":"latest"}
+  ]
+}
