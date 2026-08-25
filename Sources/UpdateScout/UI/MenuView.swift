@@ -48,6 +48,10 @@ struct MenuView: View {
             footer(groups)
         }
         .frame(width: 420)
+        .background {
+            MenuPanelBehavior(keepsVisible: updatePrompt != nil || store.isUpdating)
+                .frame(width: 0, height: 0)
+        }
         .onChange(of: store.isScanning) { scanning in
             if scanning {
                 query = ""
@@ -281,6 +285,7 @@ struct MenuView: View {
     private func requestUpdate(_ items: [UpdateItem]) {
         let prompt = UpdatePrompt.confirmation(for: items)
         guard !prompt.items.isEmpty else { return }
+        AppActivation.bringForward()
         withAnimation(.easeInOut(duration: 0.15)) { updatePrompt = prompt }
     }
 

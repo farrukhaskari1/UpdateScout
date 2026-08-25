@@ -46,6 +46,8 @@ Click **Update** on a row to review and run its command inside UpdateScout, or u
 command show **Open** instead, taking you to their normal download page. Copying
 commands and opening release notes remain available as secondary actions. Update
 confirmation appears inline in the menu so it remains visible and actionable.
+The panel stays in front while a confirmation or update is active, then returns
+to normal menu-bar behavior when the action finishes.
 Apps and command-line tools stay together in one always-expanded list. Search is
 kept in the top action row; click the magnifying glass only when you need it.
 
