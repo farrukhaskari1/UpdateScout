@@ -34,6 +34,16 @@ struct MenuView: View {
                 content(groups)
             }
 
+            if let updatePrompt, !showingSettings {
+                Divider()
+                UpdateConfirmationBar(
+                    prompt: updatePrompt,
+                    onConfirm: confirmUpdate,
+                    onCancel: cancelUpdateConfirmation
+                )
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+
             Divider()
             footer(groups)
         }
@@ -42,9 +52,9 @@ struct MenuView: View {
             if scanning {
                 query = ""
                 isSearchPresented = false
+                updatePrompt = nil
             }
         }
-        .alert(item: $updatePrompt, content: updateAlert)
     }
 
     // MARK: - Content
@@ -74,7 +84,7 @@ struct MenuView: View {
                                 executionState: store.updateState(for: item),
                                 updatesDisabled: store.isScanning || store.isUpdating,
                                 justCopied: copiedItemID == item.id,
-                                onUpdate: { updatePrompt = .confirmation(for: [item]) },
+                                onUpdate: { requestUpdate([item]) },
                                 onCopy: { copy(item) },
                                 onOpen: { store.openInfo(for: item) },
                                 onIgnore: { store.ignore(item) }
@@ -180,19 +190,21 @@ struct MenuView: View {
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                         .help("Stop the current update and clear the queue")
-                } else {
-                    Button {
-                        updatePrompt = .confirmation(for: allRunnable)
-                    } label: {
+                } else if !allRunnable.isEmpty {
+                    Button(action: { requestUpdate(allRunnable) }) {
                         Label("Update All", systemImage: "arrow.down.circle")
                             .font(Theme.Font.caption)
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
-                    .disabled(allRunnable.isEmpty)
-                    .help(allRunnable.isEmpty
-                          ? "No command-based updates available"
-                          : "Run all \(total) updates inside UpdateScout")
+                    .help("Run all \(total) updates inside UpdateScout")
+                } else {
+                    Button(emptyUpdateLabel, systemImage: emptyUpdateSymbol, action: {})
+                        .font(Theme.Font.caption)
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(true)
+                        .help(emptyUpdateHelp)
                 }
 
                 if permissionFallbacks.isEmpty {
@@ -229,25 +241,57 @@ struct MenuView: View {
         .padding(.vertical, Theme.Space.inner + 2)
     }
 
-    private func updateAlert(_ prompt: UpdatePrompt) -> Alert {
-        let items = prompt.items
-        let count = items.count
-        let itemName = items.first?.name ?? "item"
-        let title = count == 1 ? "Update \(itemName)?" : "Update all \(count) items?"
-        let detail: String
-        if count == 1, let command = items.first?.upgradeCommand {
-            detail = "UpdateScout will run:\n\n\(command)\n\nmacOS may ask for administrator permission. If permission is declined, you can copy the command instead."
-        } else {
-            detail = "UpdateScout will run \(count) commands one by one. macOS may ask for administrator permission when an update needs it; declined commands can be copied instead."
+    private var emptyUpdateLabel: String {
+        if store.isScanning { "Checking…" }
+        else if store.items.isEmpty { "Up to Date" }
+        else if hasStoppedUpdate { "Refresh Needed" }
+        else if allCommandUpdatesSucceeded { "All Updated" }
+        else { "Manual Updates" }
+    }
+
+    private var emptyUpdateSymbol: String {
+        if store.isScanning { "ellipsis" }
+        else if store.items.isEmpty { "checkmark" }
+        else if hasStoppedUpdate { "arrow.clockwise" }
+        else if allCommandUpdatesSucceeded { "checkmark" }
+        else { "hand.raised" }
+    }
+
+    private var emptyUpdateHelp: String {
+        if store.isScanning { "Wait for the update check to finish" }
+        else if store.items.isEmpty { "No updates are available" }
+        else if hasStoppedUpdate { "Refresh to verify the stopped update before trying again" }
+        else if allCommandUpdatesSucceeded { "All command-based updates finished" }
+        else { "These items must be opened and updated manually" }
+    }
+
+    private var hasStoppedUpdate: Bool {
+        store.items.contains { item in
+            if case .stopped = store.updateState(for: item) { true } else { false }
         }
-        return Alert(
-            title: Text(title),
-            message: Text(detail),
-            primaryButton: .default(Text(count == 1 ? "Update" : "Update All")) {
-                store.startUpdates(items)
-            },
-            secondaryButton: .cancel()
-        )
+    }
+
+    private var allCommandUpdatesSucceeded: Bool {
+        let commandItems = store.items.filter { $0.upgradeCommand != nil }
+        return !commandItems.isEmpty && commandItems.allSatisfy {
+            store.updateState(for: $0) == .succeeded
+        }
+    }
+
+    private func requestUpdate(_ items: [UpdateItem]) {
+        let prompt = UpdatePrompt.confirmation(for: items)
+        guard !prompt.items.isEmpty else { return }
+        withAnimation(.easeInOut(duration: 0.15)) { updatePrompt = prompt }
+    }
+
+    private func confirmUpdate() {
+        guard let prompt = updatePrompt else { return }
+        withAnimation(.easeInOut(duration: 0.15)) { updatePrompt = nil }
+        store.startUpdates(prompt.items)
+    }
+
+    private func cancelUpdateConfirmation() {
+        withAnimation(.easeInOut(duration: 0.15)) { updatePrompt = nil }
     }
 
     /// A single command such as `rustup update` may represent several rows.
@@ -275,6 +319,7 @@ struct MenuView: View {
         if !showingSettings {
             query = ""
             isSearchPresented = false
+            updatePrompt = nil
         }
         withAnimation(.easeInOut(duration: 0.15)) { showingSettings.toggle() }
     }

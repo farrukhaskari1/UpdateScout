@@ -44,7 +44,8 @@ UpdateScout                         ⌕  ⟳  ⚙
 Click **Update** on a row to review and run its command inside UpdateScout, or use
 **Update All** to run every available command in sequence. Apps without a safe
 command show **Open** instead, taking you to their normal download page. Copying
-commands and opening release notes remain available as secondary actions.
+commands and opening release notes remain available as secondary actions. Update
+confirmation appears inline in the menu so it remains visible and actionable.
 Apps and command-line tools stay together in one always-expanded list. Search is
 kept in the top action row; click the magnifying glass only when you need it.
 
