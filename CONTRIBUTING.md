@@ -25,8 +25,8 @@ Run the checks before submitting a pull request:
 swift test
 swift build -c release
 ./build.sh
-codesign --verify --deep --strict --verbose=2 dist/UpdateScout.app
-plutil -lint dist/UpdateScout.app/Contents/Info.plist
+codesign --verify --deep --strict --verbose=2 "dist/Update Scout.app"
+plutil -lint "dist/Update Scout.app/Contents/Info.plist"
 ```
 
 Tests must work offline. Add synthetic fixtures for parser changes and include

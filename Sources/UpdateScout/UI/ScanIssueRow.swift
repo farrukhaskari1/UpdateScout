@@ -10,14 +10,10 @@ struct ScanIssueRow: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: Theme.Space.inner) {
-            Image(systemName: issue.severity.symbol)
-                .font(Theme.Font.caption)
-                .foregroundStyle(issue.severity == .failed ? Color.orange : Color.secondary)
-                .frame(width: Theme.iconSide - Theme.Space.tight, alignment: .leading)
-                .accessibilityHidden(true)
+            issueIcon
 
             VStack(alignment: .leading, spacing: Theme.Space.tight) {
-                Text(issue.source.title)
+                Text(issue.subject ?? issue.source.title)
                     .font(Theme.Font.body.bold())
 
                 Text(issue.message)
@@ -40,6 +36,23 @@ struct ScanIssueRow: View {
             }
         }
         .accessibilityElement(children: .contain)
+    }
+
+    @ViewBuilder
+    private var issueIcon: some View {
+        if let icon = AppIconLoader.shared.icon(atPath: issue.iconPath) {
+            Image(nsImage: icon)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: Theme.iconSide, height: Theme.iconSide)
+                .accessibilityHidden(true)
+        } else {
+            Image(systemName: issue.severity.symbol)
+                .font(Theme.Font.caption)
+                .foregroundStyle(issue.severity == .failed ? Color.orange : Color.secondary)
+                .frame(width: Theme.iconSide, alignment: .center)
+                .accessibilityHidden(true)
+        }
     }
 
     @ViewBuilder

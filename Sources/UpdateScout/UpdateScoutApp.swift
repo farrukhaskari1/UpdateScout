@@ -17,33 +17,97 @@ struct UpdateScoutApp: App {
                 .onAppear { store.refreshIfStale() }
         } label: {
             MenuBarLabel(count: store.items.count,
-                         scanning: store.isScanning,
                          showCount: settings.showBadgeCount)
         }
         .menuBarExtraStyle(.window)
+
+        Window("Update Scout", id: "dashboard") {
+            DashboardView()
+                .environmentObject(store)
+        }
+        .defaultSize(width: 760, height: 640)
+        .windowResizability(.contentMinSize)
     }
 }
 
-/// The icon in the menu bar: a count when something is outdated, a plain glyph otherwise.
+/// A scout mark in the menu bar, with an optional count when updates are available.
 private struct MenuBarLabel: View {
     let count: Int
-    let scanning: Bool
     let showCount: Bool
 
     var body: some View {
         HStack(spacing: 3) {
-            Image(systemName: symbol)
+            Image(systemName: MacHardwareIcon.symbolName)
+                .symbolRenderingMode(.monochrome)
+                .font(.system(size: 15, weight: .semibold))
+                .frame(width: 18, height: 16)
             if showCount && count > 0 {
                 Text("\(count)")
                     .font(.system(size: 11, weight: .semibold))
                     .monospacedDigit()
             }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            count > 0
+                ? "\(MacHardwareIcon.machineName), \(count) updates available"
+                : "\(MacHardwareIcon.machineName), no updates available"
+        )
+    }
+}
+
+/// Uses the Mac's marketing family rather than a generic menu-bar glyph.
+/// `system_profiler` is queried once per launch because modern identifiers such
+/// as `Mac16,7` no longer reveal whether the machine is a notebook or desktop.
+enum MacHardwareIcon {
+    static let identity: (name: String, model: String?) = detectIdentity()
+    static let machineName = identity.name
+    static let symbolName = symbol(machineName: identity.name, modelIdentifier: identity.model)
+
+    static func symbol(machineName: String?, modelIdentifier: String?) -> String {
+        let name = machineName?.lowercased() ?? ""
+        let model = modelIdentifier?.lowercased() ?? ""
+
+        if name.contains("macbook") || model.hasPrefix("macbook") {
+            return available("macbook.gen2", fallback: "macbook")
+        }
+        if name.contains("mac studio") { return available("macstudio.fill", fallback: "desktopcomputer") }
+        if name.contains("mac mini") || model.hasPrefix("macmini") {
+            return available("macmini.gen3.fill", fallback: "macmini.fill")
+        }
+        if name.contains("imac") || model.hasPrefix("imac") { return "desktopcomputer" }
+        if name.contains("mac pro") || model.hasPrefix("macpro") {
+            return available("macpro.gen3.fill", fallback: "desktopcomputer")
+        }
+        return "desktopcomputer"
     }
 
-    private var symbol: String {
-        if scanning { return "arrow.triangle.2.circlepath" }
-        return count > 0 ? "arrow.down.circle.fill" : "checkmark.circle"
+    private static func detectIdentity() -> (name: String, model: String?) {
+        guard let result = try? Shell.run(
+            "system_profiler",
+            ["SPHardwareDataType", "-json"],
+            timeout: 5
+        ),
+        result.ok,
+        let identity = parseIdentity(from: Data(result.stdout.utf8))
+        else { return ("Mac", nil) }
+
+        return identity
+    }
+
+    static func parseIdentity(from data: Data) -> (name: String, model: String?)? {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let hardware = (json["SPHardwareDataType"] as? [[String: Any]])?.first
+        else { return nil }
+        let name = hardware["machine_name"] as? String ?? "Mac"
+        let model = hardware["machine_model"] as? String
+        return (name, model)
+    }
+
+    private static func available(_ preferred: String, fallback: String) -> String {
+        NSImage(systemSymbolName: preferred, accessibilityDescription: nil) == nil
+            ? fallback
+            : preferred
     }
 }
 

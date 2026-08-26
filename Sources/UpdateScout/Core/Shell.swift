@@ -353,19 +353,33 @@ private final class PipeReader: @unchecked Sendable {
         self.stream = stream
     }
 
-    func readToEnd() { output.append(pipe.fileHandleForReading.readDataToEndOfFile(), to: stream) }
+    func readToEnd() {
+        while true {
+            let chunk = pipe.fileHandleForReading.availableData
+            guard !chunk.isEmpty else { return }
+            // Continue draining even after the retained prefix is full. That
+            // prevents a noisy child from blocking on its pipe without letting
+            // an update command turn arbitrary output into arbitrary memory use.
+            output.append(chunk, to: stream)
+        }
+    }
 }
 
 private final class ProcessOutput: Sendable {
     enum Stream: Sendable { case stdout, stderr }
     private struct State: Sendable { var stdout = Data(); var stderr = Data() }
+    private static let maximumBytesPerStream = 16 * 1_024 * 1_024
     private let state = OSAllocatedUnfairLock(initialState: State())
 
     func append(_ data: Data, to stream: Stream) {
         state.withLock {
             switch stream {
-            case .stdout: $0.stdout.append(data)
-            case .stderr: $0.stderr.append(data)
+            case .stdout:
+                let remaining = max(0, Self.maximumBytesPerStream - $0.stdout.count)
+                if remaining > 0 { $0.stdout.append(data.prefix(remaining)) }
+            case .stderr:
+                let remaining = max(0, Self.maximumBytesPerStream - $0.stderr.count)
+                if remaining > 0 { $0.stderr.append(data.prefix(remaining)) }
             }
         }
     }

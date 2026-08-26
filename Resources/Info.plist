@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleExecutable</key>
-	<string>UpdateScout</string>
+	<string>Update Scout</string>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
@@ -13,9 +13,9 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>UpdateScout</string>
+	<string>Update Scout</string>
 	<key>CFBundleDisplayName</key>
-	<string>UpdateScout</string>
+	<string>Update Scout</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -33,6 +33,6 @@
 	<key>NSSupportsSuddenTermination</key>
 	<false/>
 	<key>NSHumanReadableCopyright</key>
-	<string>Copyright © 2026 UpdateScout contributors.</string>
+	<string>Copyright © 2026 Update Scout contributors.</string>
 </dict>
 </plist>

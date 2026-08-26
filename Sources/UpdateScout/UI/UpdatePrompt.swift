@@ -29,16 +29,16 @@ enum UpdatePrompt {
     var summary: String {
         switch self {
         case .updates(let items) where items.count == 1:
-            "UpdateScout will run this command inside the app. macOS may ask for administrator permission."
+            "Update Scout will run this command inside the app. macOS may ask for administrator permission."
         case .updates:
-            "UpdateScout will run these commands one by one. You can stop the queue at any time."
+            "Update Scout will run these commands one by one. You can stop the queue at any time."
         case .recovery(let issue)
             where issue.recovery?.command != nil && issue.recovery?.disablesSource != nil:
-            "UpdateScout will install the safer package tool, switch source tracking to it, then check again. Existing packages are not moved."
+            "Update Scout will install the safer package tool, switch source tracking to it, then check again. Existing packages are not moved."
         case .recovery(let issue) where issue.recovery?.command != nil:
-            "UpdateScout will run this setup command inside the app, then check your sources again."
+            "Update Scout will run this setup command inside the app, then check your sources again."
         case .recovery:
-            "UpdateScout will switch source tracking to the safer package tool, then check again. Existing packages are not moved."
+            "Update Scout will switch source tracking to the safer package tool, then check again. Existing packages are not moved."
         }
     }
 

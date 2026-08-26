@@ -1,6 +1,6 @@
-# UpdateScout roadmap
+# Update Scout roadmap
 
-UpdateScout's durable position is a local-first, transparent update inbox for
+Update Scout's durable position is a local-first, transparent update inbox for
 the whole Mac: native applications and developer tools in one place, without
 silently executing privileged changes.
 
@@ -18,6 +18,15 @@ silently executing privileged changes.
 - Explicit per-item Update and Update All actions, with confirmation, in-app
   execution state, macOS authorization, and a copy fallback.
 - CI plus Developer ID signing and notarization scaffolding.
+- Fresh Homebrew metadata plus official-API validation for newly published
+  formulae, and explicit rows for manually installed apps whose updater cannot
+  yet be verified.
+- A full installed-app window with local versions, coverage labels, search, and
+  official-source web or ChatGPT discovery fallbacks.
+- Collapsible update and attention sections.
+- Exact official release adapters for Chrome, 1Password, Slack,
+  Karabiner-Elements, and SSH Pilot, selected by bundle identifier rather than
+  fuzzy app-name matching.
 
 ## Next: trust and observability
 
@@ -38,6 +47,8 @@ silently executing privileged changes.
   confirmation and visible in-app state for every update run.
 - A documented provider schema and community-maintained source catalog built on
   the existing `sources.json` format.
+- Compatibility-aware providers for IDE plugins and vendor launchers, with
+  exact ownership matching before an update command is offered.
 
 ## Later: interaction polish
 

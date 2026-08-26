@@ -30,7 +30,7 @@ enum SourceKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .homebrewCask:    return "Homebrew Casks"
         case .macAppStore:     return "Mac App Store"
         case .macOSSystem:     return "macOS System"
-        case .sparkleApp:      return "Apps (Sparkle)"
+        case .sparkleApp:      return "Applications"
         case .githubApp:       return "Apps (GitHub Releases)"
         case .mise:            return "mise"
         case .rustup:          return "rustup"
@@ -200,23 +200,36 @@ enum IssueSeverity: Sendable {
 /// A source produced no results, surfaced so silent gaps don't read as "all up to date".
 struct ScanIssue: Identifiable, Hashable, Sendable {
     let source: SourceKind
+    /// Optional app/tool name when the issue belongs to one inventory item.
+    let subject: String?
     let message: String
     let severity: IssueSeverity
     let recovery: IssueRecovery?
+    let iconPath: String?
+    /// Optional private discriminator for otherwise identical visible issues.
+    /// For app-specific issues this is the bundle path, which is intentionally
+    /// not added to the user-facing message.
+    let identity: String?
 
     init(
         source: SourceKind,
+        subject: String? = nil,
         message: String,
         severity: IssueSeverity = .failed,
-        recovery: IssueRecovery? = nil
+        recovery: IssueRecovery? = nil,
+        iconPath: String? = nil,
+        identity: String? = nil
     ) {
         self.source = source
+        self.subject = subject
         self.message = message
         self.severity = severity
         self.recovery = recovery
+        self.iconPath = iconPath
+        self.identity = identity
     }
 
-    var id: String { "\(source.rawValue):\(message)" }
+    var id: String { "\(source.rawValue):\(identity ?? subject ?? ""):\(message)" }
 }
 
 

@@ -13,8 +13,18 @@ final class UserSettings: ObservableObject {
         static let ignoredBundleIDs = "ignoredBundleIDs"
         static let lastScanDate = "lastScanDate"
         static let showBadgeCount = "showBadgeCount"
+        static let showSearchControl = "showSearchControl"
+        static let showStatusCard = "showStatusCard"
+        static let showInstalledAppsControl = "showInstalledAppsControl"
+        static let showCopyCommandsControl = "showCopyCommandsControl"
         static let notifyOnNew = "notifyOnNew"
         static let refreshIntervalMinutes = "refreshIntervalMinutes"
+        static let bulkLookupProvider = "bulkLookupProvider"
+        static let bulkLookupPrompt = "bulkLookupPrompt"
+        static let googleSearchEngineID = "googleSearchEngineID"
+        static let anthropicModel = "anthropicModel"
+        static let customAIEndpoint = "customAIEndpoint"
+        static let customAIModel = "customAIModel"
     }
 
     private let defaults = UserDefaults.standard
@@ -30,12 +40,52 @@ final class UserSettings: ObservableObject {
         didSet { defaults.set(showBadgeCount, forKey: Key.showBadgeCount) }
     }
 
+    @Published var showSearchControl: Bool {
+        didSet { defaults.set(showSearchControl, forKey: Key.showSearchControl) }
+    }
+
+    @Published var showStatusCard: Bool {
+        didSet { defaults.set(showStatusCard, forKey: Key.showStatusCard) }
+    }
+
+    @Published var showInstalledAppsControl: Bool {
+        didSet { defaults.set(showInstalledAppsControl, forKey: Key.showInstalledAppsControl) }
+    }
+
+    @Published var showCopyCommandsControl: Bool {
+        didSet { defaults.set(showCopyCommandsControl, forKey: Key.showCopyCommandsControl) }
+    }
+
     @Published var notifyOnNew: Bool {
         didSet { defaults.set(notifyOnNew, forKey: Key.notifyOnNew) }
     }
 
     @Published var refreshIntervalMinutes: Int {
         didSet { defaults.set(refreshIntervalMinutes, forKey: Key.refreshIntervalMinutes) }
+    }
+
+    @Published var bulkLookupProvider: BulkLookupProvider {
+        didSet { defaults.set(bulkLookupProvider.rawValue, forKey: Key.bulkLookupProvider) }
+    }
+
+    @Published var bulkLookupPrompt: String {
+        didSet { defaults.set(bulkLookupPrompt, forKey: Key.bulkLookupPrompt) }
+    }
+
+    @Published var googleSearchEngineID: String {
+        didSet { defaults.set(googleSearchEngineID, forKey: Key.googleSearchEngineID) }
+    }
+
+    @Published var anthropicModel: String {
+        didSet { defaults.set(anthropicModel, forKey: Key.anthropicModel) }
+    }
+
+    @Published var customAIEndpoint: String {
+        didSet { defaults.set(customAIEndpoint, forKey: Key.customAIEndpoint) }
+    }
+
+    @Published var customAIModel: String {
+        didSet { defaults.set(customAIModel, forKey: Key.customAIModel) }
     }
 
     @Published var lastScanDate: Date? {
@@ -54,14 +104,32 @@ final class UserSettings: ObservableObject {
         } else {
             disabledSources = Self.defaultDisabled
         }
-        showBadgeCount = defaults.object(forKey: Key.showBadgeCount) as? Bool ?? true
+        showBadgeCount = defaults.object(forKey: Key.showBadgeCount) as? Bool ?? false
+        showSearchControl = defaults.object(forKey: Key.showSearchControl) as? Bool ?? true
+        showStatusCard = defaults.object(forKey: Key.showStatusCard) as? Bool ?? true
+        showInstalledAppsControl = defaults.object(forKey: Key.showInstalledAppsControl) as? Bool ?? true
+        showCopyCommandsControl = defaults.object(forKey: Key.showCopyCommandsControl) as? Bool ?? true
         notifyOnNew = defaults.object(forKey: Key.notifyOnNew) as? Bool ?? false
         refreshIntervalMinutes = defaults.object(forKey: Key.refreshIntervalMinutes) as? Int ?? 60
+        bulkLookupProvider = BulkLookupProvider(
+            rawValue: defaults.string(forKey: Key.bulkLookupProvider) ?? ""
+        ) ?? .chatGPT
+        bulkLookupPrompt = defaults.string(forKey: Key.bulkLookupPrompt) ?? Self.defaultLookupPrompt
+        googleSearchEngineID = defaults.string(forKey: Key.googleSearchEngineID) ?? ""
+        anthropicModel = defaults.string(forKey: Key.anthropicModel) ?? "claude-sonnet-5"
+        customAIEndpoint = defaults.string(forKey: Key.customAIEndpoint) ?? ""
+        customAIModel = defaults.string(forKey: Key.customAIModel) ?? ""
         let stamp = defaults.double(forKey: Key.lastScanDate)
         lastScanDate = stamp > 0 ? Date(timeIntervalSince1970: stamp) : nil
         ignoredBundleIDs = Set(defaults.array(forKey: Key.ignoredBundleIDs) as? [String] ?? [])
         settingsError = nil
     }
+
+    static let defaultLookupPrompt = """
+    Find the latest stable macOS release for every installed app. Prefer the official vendor,
+    official release notes, App Store listing, appcast, or official repository. Ignore beta,
+    nightly, preview, and Windows-only releases. Never guess when no reliable version is found.
+    """
 
     func isEnabled(_ source: SourceKind) -> Bool {
         !disabledSources.contains(source.rawValue)

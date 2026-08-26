@@ -11,17 +11,46 @@ struct HomebrewProvider: UpdateProvider {
     /// Cask tokens installed on this machine — used to stop the Sparkle scanner
     /// from reporting apps Homebrew already manages.
     ///
-    /// `OSAllocatedUnfairLock` rather than `NSLock`: this is written from an
-    /// async function, and `NSLock.lock()` is unavailable from async contexts
-    /// (a warning in Swift 5 mode, an error in Swift 6).
-    private static let caskTokens = OSAllocatedUnfairLock(initialState: Set<String>())
+    struct InstalledCaskApps: Sendable, Equatable {
+        var paths: Set<String> = []
+        var fileNames: Set<String> = []
+    }
+
+    /// Exact app artifacts declared by installed casks. Matching names alone
+    /// can hide an unrelated manual app, so paths are preferred and filenames
+    /// are accepted only in the standard Applications folders.
+    private static let caskApps = OSAllocatedUnfairLock(initialState: InstalledCaskApps())
+
+    struct InstalledFormula: Sendable, Equatable {
+        let name: String
+        let version: String
+    }
 
     func scan() async -> ScanResult {
         guard isAvailable else { return ScanResult() }
 
-        // Homebrew 4 refreshes its JSON metadata on demand, so no `brew update`
-        // is needed here — that would cost a git fetch on every scan.
-        await Self.cacheCaskTokens()
+        // `brew outdated` can use locally cached API metadata without learning
+        // about a release that has just landed. `update-if-needed` is the cheap,
+        // supported way to refresh that metadata: it is normally a no-op, but it
+        // closes the window where another updater sees a release before we do.
+        let refresh = await Shell.runAsync("brew", ["update-if-needed"], timeout: 240)
+        let refreshIssue: ScanIssue? = {
+            guard let refresh else {
+                return ScanIssue(
+                    source: .homebrewFormula,
+                    message: "Could not refresh Homebrew metadata; results may be stale."
+                )
+            }
+            guard !refresh.ok else { return nil }
+            let detail = refresh.stderr.nonEmpty ?? refresh.stdout.nonEmpty
+            return ScanIssue(
+                source: .homebrewFormula,
+                message: detail.map { "Could not refresh Homebrew metadata: \($0)" }
+                    ?? "Could not refresh Homebrew metadata; results may be stale."
+            )
+        }()
+
+        await Self.cacheInstalledCaskApps()
 
         guard let result = await Shell.runAsync(
             "brew",
@@ -40,10 +69,58 @@ struct HomebrewProvider: UpdateProvider {
         // the first `matchPath` would otherwise do a few hundred plist reads
         // inline. Subsequent calls hit AppInventory's cache.
         _ = await Shell.offPool { AppInventory.scan() }
-        guard let items = Self.parse(data, iconPath: AppInventory.matchPath(for:)) else {
+        guard var items = Self.parse(data, iconPath: AppInventory.matchPath(for:)) else {
             return issue(result.stderr.nonEmpty ?? "Unreadable output from `brew outdated`.")
         }
-        return ScanResult(items: items, issues: [])
+
+        // Same-day releases can reach the public API before Homebrew refreshes
+        // its local package catalog. Check explicitly installed core formulae
+        // against that API so fresh releases such as llmfit are not missed.
+        if let inventory = await Shell.runAsync(
+            "brew", ["info", "--json=v2", "--formula", "--installed"], timeout: 120
+        ), inventory.ok, let inventoryData = inventory.stdout.data(using: .utf8) {
+            let alreadyReported = Set(
+                items.filter { $0.source == .homebrewFormula }.map(\.name)
+            )
+            let installed = Self.installedRequestedFormulae(from: inventoryData)
+                .filter { !alreadyReported.contains($0.name) }
+            if let latestVersions = await Registries.homebrewFormulaVersions() {
+                let fresh = installed.compactMap { formula -> UpdateItem? in
+                    guard let latest = latestVersions[formula.name],
+                          Version.isNewer(latest, than: formula.version)
+                    else { return nil }
+                    return UpdateItem(
+                        source: .homebrewFormula,
+                        name: formula.name,
+                        installedVersion: formula.version,
+                        latestVersion: latest,
+                        upgradeCommand: "brew update && brew upgrade \(Shell.quoteArgument(formula.name))",
+                        infoURL: URL(string: "https://formulae.brew.sh/formula/\(formula.name)")
+                    )
+                }
+                items.append(contentsOf: fresh)
+            }
+        }
+        return ScanResult(items: items, issues: refreshIssue.map { [$0] } ?? [])
+    }
+
+    static func installedRequestedFormulae(from data: Data) -> [InstalledFormula] {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return []
+        }
+        return (root["formulae"] as? [[String: Any]] ?? []).compactMap { formula in
+            guard let name = formula["name"] as? String,
+                  !((formula["pinned"] as? Bool) ?? false),
+                  (formula["tap"] as? String) == "homebrew/core"
+            else { return nil }
+            let installs = formula["installed"] as? [[String: Any]] ?? []
+            let requestedVersions = installs.compactMap { install -> String? in
+                guard (install["installed_on_request"] as? Bool) == true else { return nil }
+                return install["version"] as? String
+            }
+            guard let version = Version.highest(requestedVersions) else { return nil }
+            return InstalledFormula(name: name, version: version)
+        }
     }
 
     /// Pure parser used by production and fixture tests.
@@ -86,34 +163,54 @@ struct HomebrewProvider: UpdateProvider {
         return items
     }
 
-    /// Record every installed cask token, normalised, for de-duplication.
-    private static func cacheCaskTokens() async {
-        guard let result = await Shell.runAsync("brew", ["list", "--cask", "-1"], timeout: 60),
-              result.ok
+    private static func cacheInstalledCaskApps() async {
+        guard let result = await Shell.runAsync(
+            "brew", ["info", "--json=v2", "--cask", "--installed"], timeout: 120
+        ), result.ok, let data = result.stdout.data(using: .utf8)
         else {
-            // Better to double-report an app than to suppress it based on a
-            // cask list from a previous, possibly different, scan.
-            caskTokens.withLock { $0 = [] }
+            caskApps.withLock { $0 = InstalledCaskApps() }
             return
         }
-        let tokens = result.stdout
-            .split(separator: "\n")
-            .map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
-            .filter { !$0.isEmpty }
-        caskTokens.withLock { $0 = Set(tokens) }
+        caskApps.withLock { $0 = installedCaskApps(from: data) }
     }
 
-    /// True if an app name like "Visual Studio Code" looks like an installed cask.
-    static func managesApp(named appName: String) -> Bool {
-        let normalized = appName
-            .lowercased()
-            .replacingOccurrences(of: " ", with: "-")
-            .replacingOccurrences(of: "_", with: "-")
-        return caskTokens.withLock { tokens in
-            if tokens.contains(normalized) { return true }
-            // "iterm2" cask vs "iTerm" app, "google-chrome" vs "Google Chrome"
-            let squashed = normalized.replacingOccurrences(of: "-", with: "")
-            return tokens.contains { $0.replacingOccurrences(of: "-", with: "") == squashed }
+    static func installedCaskApps(from data: Data) -> InstalledCaskApps {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return InstalledCaskApps()
+        }
+        var inventory = InstalledCaskApps()
+        for cask in root["casks"] as? [[String: Any]] ?? [] {
+            for artifact in cask["artifacts"] as? [[String: Any]] ?? [] {
+                let sources = artifact["app"] as? [String] ?? []
+                for source in sources {
+                    let fileName = URL(fileURLWithPath: source).lastPathComponent
+                    if fileName.lowercased().hasSuffix(".app") {
+                        inventory.fileNames.insert(fileName)
+                    }
+                }
+                if let target = artifact["target"] as? String,
+                   target.lowercased().hasSuffix(".app") {
+                    inventory.paths.insert(
+                        URL(fileURLWithPath: target).standardizedFileURL.path
+                    )
+                }
+            }
+        }
+        return inventory
+    }
+
+    static func managesApp(at path: String) -> Bool {
+        let url = URL(fileURLWithPath: path).standardizedFileURL
+        return caskApps.withLock { inventory in
+            if inventory.paths.contains(url.path) { return true }
+            let standardParents: Set<String> = [
+                "/Applications",
+                FileManager.default.homeDirectoryForCurrentUser
+                    .appendingPathComponent("Applications", isDirectory: true)
+                    .standardizedFileURL.path
+            ]
+            return standardParents.contains(url.deletingLastPathComponent().path)
+                && inventory.fileNames.contains(url.lastPathComponent)
         }
     }
 }

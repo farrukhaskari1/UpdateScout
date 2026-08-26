@@ -22,6 +22,11 @@ struct PackageRef: Sendable {
     }
 }
 
+struct OfficialAppRelease: Sendable, Equatable {
+    let version: String
+    let infoURL: URL
+}
+
 enum Registries {
 
     private static let session: URLSession = {
@@ -93,6 +98,110 @@ enum Registries {
             else { return nil }
             let page = (root["html_url"] as? String).flatMap(URL.init(string:))
             return (tag, page)
+        } catch {
+            return nil
+        }
+    }
+
+    /// Exact vendor-owned release sources for popular apps that use private
+    /// self-updaters and do not expose a Sparkle feed in their bundle.
+    private static let officialGitHubAppRepositories: [String: String] = [
+        "io.github.mfat.sshpilot": "mfat/sshpilot",
+        "org.pqrs.Karabiner-Elements.Settings": "pqrs-org/Karabiner-Elements"
+    ]
+
+    static let officialAppBundleIDs: Set<String> = Set([
+        "com.1password.1password",
+        "com.google.Chrome",
+        "com.tinyspeck.slackmacgap"
+    ]).union(officialGitHubAppRepositories.keys)
+
+    static func officialAppLatest(_ bundleID: String) async -> OfficialAppRelease? {
+        switch bundleID {
+        case "com.google.Chrome":
+            #if arch(arm64)
+            let platform = "mac_arm64"
+            #else
+            let platform = "mac"
+            #endif
+            guard let url = URL(string: "https://versionhistory.googleapis.com/v1/chrome/platforms/\(platform)/channels/stable/versions?pageSize=1"),
+                  let root = await json(url) as? [String: Any],
+                  let versions = root["versions"] as? [[String: Any]],
+                  let version = versions.first?["version"] as? String,
+                  let page = URL(string: "https://chromereleases.googleblog.com/search/label/Stable%20updates")
+            else { return nil }
+            return OfficialAppRelease(version: version, infoURL: page)
+
+        case "com.1password.1password":
+            guard let url = URL(string: "https://releases.1password.com/mac/stable/"),
+                  let data = await data(from: url),
+                  let version = firstVersion(in: data, after: "Updated to ")
+            else { return nil }
+            return OfficialAppRelease(version: version, infoURL: url)
+
+        case "com.tinyspeck.slackmacgap":
+            guard let url = URL(string: "https://slack.com/release-notes/mac"),
+                  let data = await data(from: url),
+                  let version = firstVersion(in: data, after: "Slack ")
+            else { return nil }
+            return OfficialAppRelease(version: version, infoURL: url)
+
+        default:
+            guard let repo = officialGitHubAppRepositories[bundleID],
+                  let release = await githubLatestRelease(repo)
+            else { return nil }
+            let version = release.tag.hasPrefix("v")
+                ? String(release.tag.dropFirst())
+                : release.tag
+            guard let page = release.url ?? URL(string: "https://github.com/\(repo)/releases")
+            else { return nil }
+            return OfficialAppRelease(version: version, infoURL: page)
+        }
+    }
+
+    /// Extract a dotted numeric version immediately following a stable marker.
+    /// Kept pure so vendor-page changes can be covered by fixture tests.
+    static func firstVersion(in data: Data, after marker: String) -> String? {
+        guard let text = String(data: data, encoding: .utf8) else { return nil }
+        var remainder = text[...]
+        while let markerRange = remainder.range(of: marker) {
+            let suffix = remainder[markerRange.upperBound...]
+            let version = suffix.prefix { $0.isNumber || $0 == "." }
+            if version.first?.isNumber == true, version.last?.isNumber == true {
+                return String(version)
+            }
+            remainder = suffix
+        }
+        return nil
+    }
+
+    /// Current versions published by Homebrew's official API. The complete
+    /// catalog is fetched once per scan instead of issuing one request for every
+    /// installed formula. Caching is bypassed so this can close the brief gap in
+    /// which a release is public but the local Homebrew catalog is still stale.
+    static func homebrewFormulaVersions() async -> [String: String]? {
+        guard let url = URL(string: "https://formulae.brew.sh/api/formula.json") else {
+            return nil
+        }
+        var request = URLRequest(
+            url: url,
+            cachePolicy: .reloadIgnoringLocalAndRemoteCacheData,
+            timeoutInterval: 30
+        )
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+                  let formulae = try JSONSerialization.jsonObject(with: data) as? [[String: Any]]
+            else { return nil }
+            return formulae.reduce(into: [:]) { result, formula in
+                guard let name = formula["name"] as? String,
+                      let versions = formula["versions"] as? [String: Any],
+                      let stable = versions["stable"] as? String
+                else { return }
+                let revision = formula["revision"] as? Int ?? 0
+                result[name] = revision > 0 ? "\(stable)_\(revision)" : stable
+            }
         } catch {
             return nil
         }

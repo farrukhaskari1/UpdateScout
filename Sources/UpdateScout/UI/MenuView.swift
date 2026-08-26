@@ -4,10 +4,12 @@ import AppKit
 @MainActor
 struct MenuView: View {
     @EnvironmentObject private var store: UpdateStore
+    @Environment(\.openWindow) private var openWindow
+    @ObservedObject private var settings = UserSettings.shared
 
     @State private var query = ""
     @State private var isSearchPresented = false
-    @State private var showingSettings = false
+    @State private var collapsedSections: Set<String> = []
     @State private var copiedItemID: String?
     @State private var updatePrompt: UpdatePrompt?
 
@@ -20,21 +22,15 @@ struct MenuView: View {
             MenuHeader(
                 query: $query,
                 isSearchPresented: $isSearchPresented,
-                showingSettings: showingSettings,
-                onToggleSettings: toggleSettings
+                onOpenApps: { openDashboard(.apps) },
+                onOpenSettings: { openDashboard(.settings) }
             )
             .environmentObject(store)
 
-            if showingSettings {
-                Divider()
-                SettingsPane()
-                    .environmentObject(store)
-            } else {
-                Divider()
-                content(groups)
-            }
+            Divider()
+            content(groups)
 
-            if let updatePrompt, !showingSettings {
+            if let updatePrompt {
                 Divider()
                 UpdateConfirmationBar(
                     prompt: updatePrompt,
@@ -65,7 +61,7 @@ struct MenuView: View {
 
     @ViewBuilder
     private func content(_ groups: [SourceGroup]) -> some View {
-        let notes = store.issues
+        let notes = store.issues(matching: query)
 
         if groups.isEmpty && notes.isEmpty {
             if !query.isEmpty {
@@ -79,20 +75,24 @@ struct MenuView: View {
                         SourceSectionHeader(
                             title: group.title,
                             symbol: group.symbol,
-                            count: group.items.count
+                            count: group.items.count,
+                            isCollapsed: collapsedSections.contains(group.id),
+                            onToggle: { toggleSection(group.id) }
                         )
 
-                        ForEach(group.items) { item in
-                            UpdateRow(
-                                item: item,
-                                executionState: store.updateState(for: item),
-                                updatesDisabled: store.isScanning || store.isUpdating,
-                                justCopied: copiedItemID == item.id,
-                                onUpdate: { requestUpdate([item]) },
-                                onCopy: { copy(item) },
-                                onOpen: { store.openInfo(for: item) },
-                                onIgnore: { store.ignore(item) }
-                            )
+                        if !collapsedSections.contains(group.id) {
+                            ForEach(group.items) { item in
+                                UpdateRow(
+                                    item: item,
+                                    executionState: store.updateState(for: item),
+                                    updatesDisabled: store.isScanning || store.isUpdating,
+                                    justCopied: copiedItemID == item.id,
+                                    onUpdate: { requestUpdate([item]) },
+                                    onCopy: { copy(item) },
+                                    onOpen: { store.openInfo(for: item) },
+                                    onIgnore: { store.ignore(item) }
+                                )
+                            }
                         }
                     }
 
@@ -101,6 +101,8 @@ struct MenuView: View {
                             issues: notes,
                             state: store.recoveryState,
                             actionsDisabled: store.isScanning || store.isUpdating,
+                            isCollapsed: collapsedSections.contains("issues"),
+                            onToggle: { toggleSection("issues") },
                             onRecover: requestRecovery,
                             onCopy: store.copyRecoveryCommand
                         )
@@ -138,9 +140,10 @@ struct MenuView: View {
 
     private func footer(_ groups: [SourceGroup]) -> some View {
         // During a search, copy only the commands in the visible result set.
-        let visible = showingSettings
-            ? []
-            : groups.flatMap(\.items).filter { $0.upgradeCommand != nil }
+        let visible = groups
+            .filter { !collapsedSections.contains($0.id) }
+            .flatMap(\.items)
+            .filter { $0.upgradeCommand != nil }
         let allRunnable = store.isScanning
             ? []
             : uniqueRunnableItems(store.items.filter(store.canRunUpdate))
@@ -150,61 +153,55 @@ struct MenuView: View {
         let total = allRunnable.count
 
         return HStack(spacing: Theme.Space.row) {
-            if showingSettings {
-                Text("Updates run only after confirmation")
+            if store.isUpdating {
+                Button(
+                    store.isRecovering ? "Stop Setup" : "Stop Updates",
+                    systemImage: "stop.fill",
+                    action: store.cancelUpdates
+                )
                     .font(Theme.Font.caption)
-                    .foregroundStyle(.tertiary)
-            } else {
-                if store.isUpdating {
-                    Button(
-                        store.isRecovering ? "Stop Setup" : "Stop Updates",
-                        systemImage: "stop.fill",
-                        action: store.cancelUpdates
-                    )
-                        .font(Theme.Font.caption)
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .help(store.isRecovering
-                              ? "Stop the current setup command"
-                              : "Stop the current update and clear the queue")
-                } else if !allRunnable.isEmpty {
-                    Button(action: { requestUpdate(allRunnable) }) {
-                        Label("Update All", systemImage: "arrow.down.circle")
-                            .font(Theme.Font.caption)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                    .help("Run all \(total) updates inside UpdateScout")
-                } else {
-                    Button(emptyUpdateLabel, systemImage: emptyUpdateSymbol, action: {})
-                        .font(Theme.Font.caption)
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .disabled(true)
-                        .help(emptyUpdateHelp)
-                }
-
-                if permissionFallbacks.isEmpty {
-                    Button {
-                        store.copyCommands(for: visible)
-                    } label: {
-                        Label("Copy visible commands", systemImage: "doc.on.doc")
-                            .labelStyle(.iconOnly)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(visible.isEmpty ? Color.secondary : Color.accentColor)
-                    .disabled(visible.isEmpty)
-                    .help(visible.isEmpty
-                          ? "Nothing to copy"
-                          : "Copy \(visible.count) upgrade command\(visible.count == 1 ? "" : "s")")
-                } else {
-                    Button("Copy Blocked", systemImage: "doc.on.doc") {
-                        store.copyCommands(for: permissionFallbacks)
-                    }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
-                    .help("Copy \(permissionFallbacks.count) command\(permissionFallbacks.count == 1 ? "" : "s") that need permission")
+                    .help(store.isRecovering
+                          ? "Stop the current setup command"
+                          : "Stop the current update and clear the queue")
+            } else if !allRunnable.isEmpty {
+                Button(action: { requestUpdate(allRunnable) }) {
+                    Label("Update All", systemImage: "arrow.down.circle")
+                        .font(Theme.Font.caption)
                 }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .help("Run all \(total) updates inside Update Scout")
+            } else {
+                Button(emptyUpdateLabel, systemImage: emptyUpdateSymbol, action: {})
+                    .font(Theme.Font.caption)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(true)
+                    .help(emptyUpdateHelp)
+            }
+
+            if settings.showCopyCommandsControl && permissionFallbacks.isEmpty {
+                Button {
+                    store.copyCommands(for: visible)
+                } label: {
+                    Label("Copy visible commands", systemImage: "doc.on.doc")
+                        .labelStyle(.iconOnly)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(visible.isEmpty ? Color.secondary : Color.accentColor)
+                .disabled(visible.isEmpty)
+                .help(visible.isEmpty
+                      ? "Nothing to copy"
+                      : "Copy \(visible.count) upgrade command\(visible.count == 1 ? "" : "s")")
+            } else if settings.showCopyCommandsControl {
+                Button("Copy Blocked", systemImage: "doc.on.doc") {
+                    store.copyCommands(for: permissionFallbacks)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Copy \(permissionFallbacks.count) command\(permissionFallbacks.count == 1 ? "" : "s") that need permission")
             }
 
             Spacer()
@@ -302,12 +299,16 @@ struct MenuView: View {
         }
     }
 
-    private func toggleSettings() {
-        if !showingSettings {
-            query = ""
-            isSearchPresented = false
-            updatePrompt = nil
+    private func toggleSection(_ id: String) {
+        withAnimation(.easeInOut(duration: 0.15)) {
+            if collapsedSections.contains(id) { collapsedSections.remove(id) }
+            else { collapsedSections.insert(id) }
         }
-        withAnimation(.easeInOut(duration: 0.15)) { showingSettings.toggle() }
+    }
+
+    private func openDashboard(_ page: DashboardPage) {
+        UserDefaults.standard.set(page.rawValue, forKey: DashboardPage.defaultsKey)
+        openWindow(id: "dashboard")
+        AppActivation.bringForward()
     }
 }

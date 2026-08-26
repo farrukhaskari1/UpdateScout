@@ -3,11 +3,12 @@ import SwiftUI
 /// Stable panel navigation with transient status and search beneath it.
 struct MenuHeader: View {
     @EnvironmentObject private var store: UpdateStore
+    @ObservedObject private var settings = UserSettings.shared
 
     @Binding var query: String
     @Binding var isSearchPresented: Bool
-    let showingSettings: Bool
-    let onToggleSettings: () -> Void
+    let onOpenApps: () -> Void
+    let onOpenSettings: () -> Void
 
     @FocusState private var isSearchFocused: Bool
 
@@ -15,14 +16,12 @@ struct MenuHeader: View {
         VStack(alignment: .leading, spacing: Theme.Space.row) {
             toolbar
 
-            if !showingSettings {
-                if isSearchPresented {
-                    searchField
-                        .transition(.opacity.combined(with: .move(edge: .top)))
-                } else {
-                    statusCard
-                        .transition(.opacity)
-                }
+            if isSearchPresented && settings.showSearchControl {
+                searchField
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            } else if settings.showStatusCard {
+                statusCard
+                    .transition(.opacity)
             }
         }
         .padding(.horizontal, Theme.Space.edge)
@@ -41,51 +40,51 @@ struct MenuHeader: View {
 
     private var toolbar: some View {
         HStack(spacing: Theme.Space.inner) {
-            if showingSettings {
+            Text("Update Scout")
+                .font(Theme.Font.title)
+
+            Spacer(minLength: Theme.Space.inner)
+
+            if settings.showSearchControl
+                && !store.isScanning
+                && (isSearchPresented || !store.items.isEmpty || !store.issues.isEmpty) {
                 IconButton(
-                    systemName: "chevron.backward",
-                    help: "Back to updates",
-                    action: onToggleSettings
-                )
-
-                Text("Settings")
-                    .font(Theme.Font.title)
-            } else {
-                Text("UpdateScout")
-                    .font(Theme.Font.title)
-
-                Spacer(minLength: Theme.Space.inner)
-
-                if !store.isScanning && (isSearchPresented || !store.items.isEmpty) {
-                    IconButton(
-                        systemName: isSearchPresented ? "xmark" : "magnifyingglass",
-                        help: isSearchPresented ? "Close search" : "Search updates",
-                        action: toggleSearch
-                    )
-                }
-
-                if store.isScanning {
-                    Button("Stop", systemImage: "stop.fill", action: store.cancelScan)
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .help("Stop checking for updates")
-                } else {
-                    IconButton(
-                        systemName: "arrow.clockwise",
-                        help: "Check for updates now",
-                        action: store.refresh
-                    )
-                    .disabled(store.isUpdating)
-                }
-
-                IconButton(
-                    systemName: "gearshape",
-                    help: "Settings",
-                    action: onToggleSettings
+                    systemName: isSearchPresented ? "xmark" : "magnifyingglass",
+                    help: isSearchPresented ? "Close search" : "Search updates",
+                    isSelected: isSearchPresented,
+                    action: toggleSearch
                 )
             }
 
-            if showingSettings { Spacer() }
+            if store.isScanning {
+                IconButton(
+                    systemName: "stop.fill",
+                    help: "Stop checking",
+                    isDestructive: true,
+                    action: store.cancelScan
+                )
+            } else {
+                IconButton(
+                    systemName: "arrow.clockwise",
+                    help: "Check for updates now",
+                    action: store.refresh
+                )
+                .disabled(store.isUpdating)
+            }
+
+            if settings.showInstalledAppsControl {
+                IconButton(
+                    systemName: "square.grid.2x2",
+                    help: "Installed Apps",
+                    action: onOpenApps
+                )
+            }
+
+            IconButton(
+                systemName: "gearshape",
+                help: "Settings",
+                action: onOpenSettings
+            )
         }
     }
 

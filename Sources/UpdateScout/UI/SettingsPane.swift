@@ -8,6 +8,15 @@ struct SettingsPane: View {
     @State private var customSourceStatus = ""
     @State private var launchAtLogin = false
     @State private var fileError: String?
+    @State private var openAIKey = ""
+    @State private var anthropicKey = ""
+    @State private var googleKey = ""
+    @State private var customAIKey = ""
+    @State private var hasOpenAIKey = false
+    @State private var hasAnthropicKey = false
+    @State private var hasGoogleKey = false
+    @State private var hasCustomAIKey = false
+    @State private var credentialStatus = ""
 
     // Dismissal is the header chevron's job — this pane doesn't need to know.
     private let intervals = [30, 60, 180, 360, 720, 1440]
@@ -17,6 +26,8 @@ struct SettingsPane: View {
             VStack(alignment: .leading, spacing: Theme.Space.section) {
                 sources
                 behaviour
+                appearance
+                automaticLookup
                 customTools
                 pinnedApps
                 if let errorMessage {
@@ -29,7 +40,8 @@ struct SettingsPane: View {
             .padding(.horizontal, Theme.Space.edge)
             .padding(.vertical, Theme.Space.edge)
         }
-        .frame(minHeight: 180, maxHeight: 560)
+        .frame(minHeight: 420)
+        .task { await refreshCredentialStatus() }
     }
 
     // MARK: - Sections
@@ -56,10 +68,6 @@ struct SettingsPane: View {
 
     private var behaviour: some View {
         SettingsSection(title: "Behaviour") {
-            Toggle("Show count in the menu bar", isOn: $settings.showBadgeCount)
-                .toggleStyle(.checkbox)
-                .font(Theme.Font.caption)
-
             Toggle("Notify me when something new appears", isOn: $settings.notifyOnNew)
                 .toggleStyle(.checkbox)
                 .font(Theme.Font.caption)
@@ -95,9 +103,123 @@ struct SettingsPane: View {
         }
     }
 
+    private var appearance: some View {
+        SettingsSection(title: "Interface") {
+            Toggle("Show update count beside the Mac icon", isOn: $settings.showBadgeCount)
+            Toggle("Show status summary", isOn: $settings.showStatusCard)
+            Toggle("Show search control", isOn: $settings.showSearchControl)
+            Toggle("Show Installed Apps control", isOn: $settings.showInstalledAppsControl)
+            Toggle("Show Copy Commands control", isOn: $settings.showCopyCommandsControl)
+        }
+        .toggleStyle(.checkbox)
+        .font(Theme.Font.caption)
+    }
+
+    private var automaticLookup: some View {
+        SettingsSection(title: "Automatic app lookup") {
+            Picker("Service", selection: $settings.bulkLookupProvider) {
+                ForEach(BulkLookupProvider.allCases) { provider in
+                    Text(provider.title).tag(provider)
+                }
+            }
+            .pickerStyle(.menu)
+
+            Text("Your installed-app names and versions are sent only when you press Check All Apps.")
+                .font(Theme.Font.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            switch settings.bulkLookupProvider {
+            case .chatGPT:
+                credentialField(
+                    title: "OpenAI API key",
+                    text: $openAIKey,
+                    isSaved: hasOpenAIKey,
+                    save: saveOpenAIKey
+                )
+            case .claude:
+                credentialField(
+                    title: "Anthropic API key",
+                    text: $anthropicKey,
+                    isSaved: hasAnthropicKey,
+                    save: saveAnthropicKey
+                )
+                TextField("Claude model", text: $settings.anthropicModel)
+                    .textFieldStyle(.roundedBorder)
+                Text("Claude searches the web during the check and returns an official source for each result. Web search usage is billed by Anthropic.")
+                    .font(Theme.Font.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            case .google:
+                credentialField(
+                    title: "Google API key",
+                    text: $googleKey,
+                    isSaved: hasGoogleKey,
+                    save: saveGoogleKey
+                )
+                TextField("Programmable Search Engine ID", text: $settings.googleSearchEngineID)
+                    .textFieldStyle(.roundedBorder)
+                Text("Google Custom Search is available only to existing customers and is scheduled to end in 2027.")
+                    .font(Theme.Font.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            case .custom:
+                TextField("OpenAI-compatible chat completions URL", text: $settings.customAIEndpoint)
+                    .textFieldStyle(.roundedBorder)
+                TextField("Model name", text: $settings.customAIModel)
+                    .textFieldStyle(.roundedBorder)
+                credentialField(
+                    title: "API key (optional for local AI)",
+                    text: $customAIKey,
+                    isSaved: hasCustomAIKey,
+                    save: saveCustomAIKey
+                )
+                Text("Use an HTTPS service or a local endpoint such as http://localhost:11434/v1/chat/completions. Current web results require the chosen service or model to provide its own search capability.")
+                    .font(Theme.Font.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Text("Prompt")
+                .font(Theme.Font.caption.bold())
+            TextEditor(text: $settings.bulkLookupPrompt)
+                .font(Theme.Font.caption)
+                .frame(minHeight: 96)
+                .padding(Theme.Space.inner)
+                .background(Theme.subtleFill, in: RoundedRectangle(cornerRadius: Theme.Radius.card))
+
+            HStack(spacing: Theme.Space.inner) {
+                Button("Restore Prompt") {
+                    settings.bulkLookupPrompt = UserSettings.defaultLookupPrompt
+                }
+                .controlSize(.small)
+                if !credentialStatus.isEmpty {
+                    Text(credentialStatus)
+                        .font(Theme.Font.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private func credentialField(
+        title: String,
+        text: Binding<String>,
+        isSaved: Bool,
+        save: @escaping () -> Void
+    ) -> some View {
+        HStack(spacing: Theme.Space.inner) {
+            SecureField(isSaved ? "Saved in Keychain" : title, text: text)
+                .textFieldStyle(.roundedBorder)
+            Button("Save", action: save)
+                .controlSize(.small)
+                .disabled(text.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+    }
+
     private var customTools: some View {
         SettingsSection(title: "Custom CLI tools") {
-            Text("Teach UpdateScout about any tool by declaring how to read its version. No rebuild needed — the file is re-read on every scan.")
+            Text("Teach Update Scout about any tool by declaring how to read its version. No rebuild needed — the file is re-read on every scan.")
                 .font(Theme.Font.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -155,6 +277,69 @@ struct SettingsPane: View {
     }
 
     private var errorMessage: String? { fileError ?? settings.settingsError }
+
+    private func saveOpenAIKey() {
+        let value = openAIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        Task {
+            do {
+                try await SecureCredentialStore.shared.save(value, for: .openAIAPIKey)
+                openAIKey = ""
+                hasOpenAIKey = true
+                credentialStatus = "OpenAI key saved securely"
+            } catch {
+                fileError = "Could not save the OpenAI key: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func saveGoogleKey() {
+        let value = googleKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        Task {
+            do {
+                try await SecureCredentialStore.shared.save(value, for: .googleAPIKey)
+                googleKey = ""
+                hasGoogleKey = true
+                credentialStatus = "Google key saved securely"
+            } catch {
+                fileError = "Could not save the Google key: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func saveAnthropicKey() {
+        let value = anthropicKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        Task {
+            do {
+                try await SecureCredentialStore.shared.save(value, for: .anthropicAPIKey)
+                anthropicKey = ""
+                hasAnthropicKey = true
+                credentialStatus = "Anthropic key saved securely"
+            } catch {
+                fileError = "Could not save the Anthropic key: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func saveCustomAIKey() {
+        let value = customAIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        Task {
+            do {
+                try await SecureCredentialStore.shared.save(value, for: .customAIAPIKey)
+                customAIKey = ""
+                hasCustomAIKey = true
+                credentialStatus = "Custom AI key saved securely"
+            } catch {
+                fileError = "Could not save the custom AI key: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func refreshCredentialStatus() async {
+        hasOpenAIKey = ((try? await SecureCredentialStore.shared.load(.openAIAPIKey)) ?? nil) != nil
+        hasAnthropicKey = ((try? await SecureCredentialStore.shared.load(.anthropicAPIKey)) ?? nil) != nil
+        hasGoogleKey = ((try? await SecureCredentialStore.shared.load(.googleAPIKey)) ?? nil) != nil
+        hasCustomAIKey = ((try? await SecureCredentialStore.shared.load(.customAIAPIKey)) ?? nil) != nil
+    }
 
     /// Seeds the file from the bundled sample the first time, so there's
     /// something working to edit rather than an empty buffer.

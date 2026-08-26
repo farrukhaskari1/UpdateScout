@@ -40,7 +40,11 @@ final class UpdateStore: ObservableObject {
             HomebrewProvider(),
             SparkleAppProvider(
                 ignoredBundleIDs: settings.ignoredBundleIDs,
-                deduplicateHomebrewCasks: settings.isEnabled(.homebrewCask)
+                deduplicateHomebrewCasks: settings.isEnabled(.homebrewCask),
+                coveredGitHubBundleIDs: settings.isEnabled(.githubApp)
+                    ? GitHubAppProvider.configuredBundleIDs()
+                    : [],
+                macAppStoreCoverageEnabled: settings.isEnabled(.macAppStore) && Shell.has("mas")
             ),
             GitHubAppProvider(ignoredBundleIDs: settings.ignoredBundleIDs),
             MacAppStoreProvider(),
@@ -133,6 +137,16 @@ final class UpdateStore: ObservableObject {
                     ? $0.title.localizedStandardCompare($1.title) == .orderedAscending
                     : $0.rank < $1.rank
             }
+    }
+
+    func issues(matching query: String) -> [ScanIssue] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return issues }
+        return issues.filter { issue in
+            issue.subject?.localizedStandardContains(trimmed) == true
+                || issue.message.localizedStandardContains(trimmed)
+                || issue.source.title.localizedStandardContains(trimmed)
+        }
     }
 
     var applicationCount: Int { items.filter { $0.source.isApplication }.count }

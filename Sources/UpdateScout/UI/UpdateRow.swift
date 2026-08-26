@@ -131,7 +131,7 @@ struct UpdateRow: View {
             case .idle:
                 Button("Update", action: onUpdate)
                     .disabled(updatesDisabled)
-                    .help("Run the update inside UpdateScout")
+                    .help("Run the update inside Update Scout")
             case .queued:
                 Button("Queued", action: {})
                     .disabled(true)
@@ -189,7 +189,7 @@ struct UpdateRow: View {
     }
 
     private var helpText: String {
-        if item.upgradeCommand != nil { return "Run the \(item.name) update inside UpdateScout" }
+        if item.upgradeCommand != nil { return "Run the \(item.name) update inside Update Scout" }
         return "Open the download page for \(item.name)"
     }
 

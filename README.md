@@ -1,4 +1,4 @@
-# UpdateScout
+# Update Scout
 
 A local-first macOS menu bar app that finds and launches updates for native apps
 and developer tools in one place. Every command-based update is confirmed first
@@ -7,7 +7,7 @@ and then runs inside the app.
 > **Project status:** Source release. Build locally on macOS 13 or later. Signed
 > public binaries are planned but are not available yet.
 
-## Why UpdateScout
+## Why Update Scout
 
 - One always-visible list for applications and command-line tools.
 - Built-in checks for Homebrew, the Mac App Store, macOS, Sparkle, language
@@ -20,7 +20,7 @@ and then runs inside the app.
 ## Interface
 
 ```
-UpdateScout                         ⌕  ⟳  ⚙
+Update Scout                        ⌕  ⟳  ⚙
 ┌───────────────────────────────────────────┐
 │ ↓  14 updates available                  │
 │    5 apps · 9 tools · checked 2m ago     │
@@ -41,14 +41,14 @@ UpdateScout                         ⌕  ⟳  ⚙
  Update All   ⧉                         Quit
 ```
 
-Click **Update** on a row to review and run its command inside UpdateScout, or use
+Click **Update** on a row to review and run its command inside Update Scout, or use
 **Update All** to run every available command in sequence. Apps without a safe
 command show **Open** instead, taking you to their normal download page. Copying
 commands and opening release notes remain available as secondary actions. Update
 confirmation appears inline in the menu so it remains visible and actionable.
 The panel stays in front while a confirmation or update is active, then returns
 to normal menu-bar behavior when the action finishes.
-Protected runtime notices are actionable: UpdateScout can install a managed
+Protected runtime notices are actionable: Update Scout can install a managed
 Ruby, or switch an externally managed Python check to pipx/uv after confirmation.
 Apps and command-line tools stay together in one always-expanded list. Search is
 kept in the top action row; click the magnifying glass only when you need it.
@@ -63,9 +63,9 @@ chmod +x build.sh
 ./build.sh --install
 ```
 
-That compiles a release binary, wraps it in `UpdateScout.app`, ad-hoc signs it, copies it to `/Applications`, and launches it. Look for the icon in your menu bar — there is no Dock icon or window.
+That compiles a release binary, wraps it in `Update Scout.app`, ad-hoc signs it, copies it to `/Applications`, and launches it. Look for the target icon in your menu bar — there is no Dock icon or window.
 
-Without `--install` it just builds into `./dist/UpdateScout.app`.
+Without `--install` it just builds into `./dist/Update Scout.app`.
 
 **To work on it in Xcode:** `xed .` — Xcode opens Swift packages natively. Note that running from Xcode's play button launches the bare binary rather than the bundle, so login-item registration won't work; use `./build.sh --install` for real use.
 
@@ -73,7 +73,7 @@ Without `--install` it just builds into `./dist/UpdateScout.app`.
 
 | Source | How it's checked | Needs |
 |---|---|---|
-| Homebrew formulae | `brew outdated --json=v2` | `brew` |
+| Homebrew formulae | refreshed `brew outdated --json=v2`, plus a live official-API check for explicitly installed formulae | `brew` |
 | Homebrew casks | same, with `--greedy` | `brew` |
 | MacPorts | `port outdated` | `port` |
 | Mac App Store | `mas outdated` | `brew install mas` |
@@ -137,7 +137,7 @@ A system or Homebrew Python's `site-packages` is managed by the thing that insta
 
 ## Sparkle app detection
 
-Most Mac apps distributed outside the App Store use [Sparkle](https://sparkle-project.org), which means their `Info.plist` carries a `SUFeedURL` pointing at an update feed. UpdateScout reads every `.app` in `/Applications`, `/Applications/Utilities`, `~/Applications`, and `/Applications/Setapp`, fetches those feeds, and compares versions.
+Most Mac apps distributed outside the App Store use [Sparkle](https://sparkle-project.org), which means their `Info.plist` carries a `SUFeedURL` pointing at an update feed. Update Scout recursively reads application folders and shallow app results in your home folder, fetches those feeds, and compares versions. Build products, nested helper apps, hidden folders, and Library caches are excluded.
 
 It skips:
 
@@ -146,7 +146,17 @@ It skips:
 - appcast entries on a beta or nightly channel
 - entries whose `sparkle:minimumSystemVersion` is newer than your macOS
 
-Apps that don't use Sparkle — Electron apps with bespoke updaters, App Store apps, anything with a custom mechanism — won't appear here. Those either show up under Homebrew or the Mac App Store, or need a GitHub pin.
+Apps that don't use Sparkle — Electron apps with bespoke updaters, game launchers, and anything with a custom mechanism — remain visible under **Not checked** with their installed version. This is a coverage warning, not a claim that they are outdated. Add a GitHub pin when the app publishes trustworthy public releases.
+
+For exact bundle IDs with stable vendor-owned endpoints, Update Scout also checks those official sources directly. Current adapters cover Chrome's VersionHistory API, the stable release pages for 1Password and Slack, and official GitHub releases for Karabiner-Elements and SSH Pilot. Recommendation roundups may help discover an app, but are never treated as version authorities.
+
+Use the **Installed Apps** button in the menu header to open the full macOS window. It lists every discovered app and its locally installed version and update coverage. **Check All Apps** performs one opt-in bulk lookup, then displays the latest version, confidence state, summary, and source beside each app. ChatGPT uses the OpenAI Responses API with web search in batches. Claude uses the Anthropic Messages API with server-side web search. Google mode supports existing Programmable Search customers. **Custom AI** supports OpenAI-compatible chat-completions endpoints, including local services; current results depend on whether that service supplies its own web search. Individual search buttons are intentionally omitted.
+
+Bulk lookup is disabled until the user chooses and configures a service in Settings. Hosted-service keys are stored in the macOS data-protection Keychain, never preferences or project files; local Custom AI endpoints can run without a key. Custom endpoints must use HTTPS unless they resolve to this Mac. The editable prompt, model names, and endpoint URL are stored locally. Before each run, Update Scout confirms that app names and installed versions will be sent to the selected service. Google stopped accepting new Custom Search JSON API customers and has announced its discontinuation for January 2027, so Google mode is intended only for existing credentials.
+
+The Interface section in Settings can hide the menu-bar count, status summary, search control, Installed Apps control, and Copy Commands control. The count is hidden by default. The menu-bar symbol is selected at launch from the actual Mac family: MacBook, iMac, Mac mini, Mac Studio, or Mac Pro.
+
+Update and attention section headers are collapsible, so a long inventory stays manageable without hiding its counts.
 
 ## Pinning an app to GitHub releases
 
@@ -165,9 +175,9 @@ Anonymous GitHub API access is limited to 60 requests an hour. If you pin many a
 
 ## Privacy and security
 
-UpdateScout inventories software locally and contacts the public services needed
+Update Scout inventories software locally and contacts the public services needed
 to compare versions, including vendor appcasts and package registries. It does
-not include analytics, telemetry, advertising, or an UpdateScout-operated
+not include analytics, telemetry, advertising, or an Update Scout-operated
 server. Scan results and ignored items remain on your Mac.
 
 An optional `GITHUB_TOKEN` is read from the process environment only to increase
@@ -178,8 +188,8 @@ pull requests.
 The app executes an upgrade command only after you click **Update** or
 **Update All** and confirm the prompt. Progress and results remain visible in
 the app. Commands that require administrator rights use the standard macOS
-authorization prompt; if permission is declined, UpdateScout shows a **Copy
-Command** fallback. Elevation is limited to UpdateScout's built-in macOS and
+authorization prompt; if permission is declined, Update Scout shows a **Copy
+Command** fallback. Elevation is limited to Update Scout's built-in macOS and
 MacPorts commands; privileged custom-source commands are never elevated and are
 offered for copying instead. Custom-source upgrade templates are user-controlled
 shell commands and should be reviewed before use.
@@ -203,6 +213,8 @@ sensitive security details in a public issue.
 **Version comparison is heuristic.** Package ecosystems disagree about what a version string looks like. The comparator handles the common shapes (`1.2.3`, `2024.06.1`, `1.2.3_1`, `3.1.0-beta.2`) and treats prerelease tags as older than the bare release. Occasionally a project with an unusual scheme will produce a false positive; the fix is to ignore that row rather than to trust it blindly.
 
 **`brew outdated --greedy` includes self-updating casks.** Apps that update themselves get listed here too. They're filtered when Homebrew records their version as `latest`, but some will still show up and then quietly update themselves before you get to them.
+
+**Homebrew metadata can lag a just-published release.** Update Scout runs Homebrew's lightweight metadata refresh, then independently checks explicitly installed core formulae against the official Homebrew API. Homebrew still performs the actual upgrade.
 
 **Launch at login** uses `SMAppService`, which needs the app to live in `/Applications` and carry a signature. The ad-hoc signature from `build.sh` is enough. If you move the bundle after enabling it, toggle it off and on again.
 
@@ -281,4 +293,4 @@ Maintainers preparing the first public repository or release should follow
 
 ## License
 
-UpdateScout is available under the [MIT License](LICENSE).
+Update Scout is available under the [MIT License](LICENSE).

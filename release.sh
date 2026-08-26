@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-APP="$ROOT/dist/UpdateScout.app"
+APP="$ROOT/dist/Update Scout.app"
 ARCHIVE="$ROOT/dist/UpdateScout.zip"
 
 : "${DEVELOPER_ID_APPLICATION:?Set DEVELOPER_ID_APPLICATION to your Developer ID Application certificate name}"

@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 #
-# Builds UpdateScout.app from the Swift package.
+# Builds Update Scout.app from the Swift package.
 #
-#   ./build.sh            build into ./dist/UpdateScout.app
+#   ./build.sh            build into ./dist/Update Scout.app
 #   ./build.sh --install  build, then copy it into /Applications and launch it
 #   ./build.sh --universal --identity "Developer ID Application: …"
 #
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-APP_NAME="UpdateScout"
+APP_NAME="Update Scout"
+BUILD_PRODUCT_NAME="UpdateScout"
+EXECUTABLE_NAME="Update Scout"
 DIST="$ROOT/dist"
 BUNDLE="$DIST/$APP_NAME.app"
 INSTALL=false
@@ -37,16 +39,17 @@ swift build "${BUILD_ARGS[@]}"
 
 # `tail -n 1` guards against SwiftPM occasionally putting resolution chatter
 # on stdout ahead of the path.
-BINARY="$(swift build "${BUILD_ARGS[@]}" --show-bin-path 2>/dev/null | tail -n 1)/$APP_NAME"
+BINARY="$(swift build "${BUILD_ARGS[@]}" --show-bin-path 2>/dev/null | tail -n 1)/$BUILD_PRODUCT_NAME"
 if [[ ! -x "$BINARY" ]]; then
   echo "Build produced no binary at $BINARY" >&2
   exit 1
 fi
 
 echo "==> Assembling app bundle"
+rm -rf "$DIST/UpdateScout.app"
 rm -rf "$BUNDLE"
 mkdir -p "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources"
-cp "$BINARY" "$BUNDLE/Contents/MacOS/$APP_NAME"
+cp "$BINARY" "$BUNDLE/Contents/MacOS/$EXECUTABLE_NAME"
 cp "$ROOT/Resources/Info.plist" "$BUNDLE/Contents/Info.plist"
 printf 'APPL????' > "$BUNDLE/Contents/PkgInfo"
 
@@ -74,18 +77,35 @@ SIGN_ARGS=(--force --deep --sign "$SIGN_IDENTITY")
 if [[ "$SIGN_IDENTITY" != "-" ]]; then
   SIGN_ARGS+=(--options runtime --timestamp)
 fi
-codesign "${SIGN_ARGS[@]}" "$BUNDLE"
+SIGNED=false
+for _ in 1 2 3; do
+  # File-provider folders can reattach Finder metadata immediately after it is
+  # removed. Clear it directly before each signing attempt.
+  xattr -cr "$BUNDLE"
+  if codesign "${SIGN_ARGS[@]}" "$BUNDLE"; then
+    SIGNED=true
+    break
+  fi
+done
+[[ "$SIGNED" == true ]] || { echo "Could not sign $BUNDLE" >&2; exit 1; }
 
 echo "==> Built $BUNDLE"
 
 if [[ "$INSTALL" == true ]]; then
   echo "==> Installing to /Applications"
   # Quit a running copy first, or the replace will fail.
-  pkill -x "$APP_NAME" 2>/dev/null || true
+  pkill -x "$BUILD_PRODUCT_NAME" 2>/dev/null || true
+  pkill -x "$EXECUTABLE_NAME" 2>/dev/null || true
   sleep 1
+  # Remove the former no-space bundle name when upgrading an existing install.
+  rm -rf "/Applications/UpdateScout.app"
   rm -rf "/Applications/$APP_NAME.app"
   cp -R "$BUNDLE" "/Applications/$APP_NAME.app"
+  xattr -cr "/Applications/$APP_NAME.app"
   open "/Applications/$APP_NAME.app"
+  # The installed copy is canonical. Do not leave a second launchable app in
+  # dist for Spotlight and application launchers to index.
+  rm -rf "$BUNDLE"
   echo "==> Running. Look for the icon in your menu bar."
 else
   echo
