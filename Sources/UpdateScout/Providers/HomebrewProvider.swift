@@ -181,17 +181,38 @@ struct HomebrewProvider: UpdateProvider {
         var inventory = InstalledCaskApps()
         for cask in root["casks"] as? [[String: Any]] ?? [] {
             for artifact in cask["artifacts"] as? [[String: Any]] ?? [] {
-                let sources = artifact["app"] as? [String] ?? []
-                for source in sources {
-                    let fileName = URL(fileURLWithPath: source).lastPathComponent
-                    if fileName.lowercased().hasSuffix(".app") {
-                        inventory.fileNames.insert(fileName)
+                // Homebrew nests the rename target *inside* the `app` array, as a
+                // sibling dictionary of the filename:
+                //   "app": ["Foo.app", {"target": "/Applications/Bar.app"}]
+                // Casting the array to [String] drops both halves, so casks that
+                // rename their app were invisible and got double-reported by the
+                // Sparkle scanner.
+                for element in artifact["app"] as? [Any] ?? [] {
+                    if let source = element as? String {
+                        let fileName = URL(fileURLWithPath: source).lastPathComponent
+                        if fileName.lowercased().hasSuffix(".app") {
+                            inventory.fileNames.insert(fileName)
+                        }
+                    } else if let dictionary = element as? [String: Any],
+                              let target = dictionary["target"] as? String,
+                              target.lowercased().hasSuffix(".app") {
+                        inventory.paths.insert(
+                            URL(fileURLWithPath: target).standardizedFileURL.path
+                        )
+                        inventory.fileNames.insert(
+                            URL(fileURLWithPath: target).lastPathComponent
+                        )
                     }
                 }
+                // Some casks still carry `target` on the artifact itself.
                 if let target = artifact["target"] as? String,
+                   target.hasPrefix("/"),
                    target.lowercased().hasSuffix(".app") {
                     inventory.paths.insert(
                         URL(fileURLWithPath: target).standardizedFileURL.path
+                    )
+                    inventory.fileNames.insert(
+                        URL(fileURLWithPath: target).lastPathComponent
                     )
                 }
             }

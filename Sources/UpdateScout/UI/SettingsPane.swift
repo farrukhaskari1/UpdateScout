@@ -17,6 +17,13 @@ struct SettingsPane: View {
     @State private var hasGoogleKey = false
     @State private var hasCustomAIKey = false
     @State private var credentialStatus = ""
+    @State private var isTestingConnection = false
+    @State private var connectionTestResult: ConnectionTestResult?
+
+    struct ConnectionTestResult {
+        let succeeded: Bool
+        let message: String
+    }
 
     // Dismissal is the header chevron's job — this pane doesn't need to know.
     private let intervals = [30, 60, 180, 360, 720, 1440]
@@ -107,6 +114,7 @@ struct SettingsPane: View {
         SettingsSection(title: "Interface") {
             Toggle("Show update count beside the Mac icon", isOn: $settings.showBadgeCount)
             Toggle("Show status summary", isOn: $settings.showStatusCard)
+            Toggle("Show progress while updating", isOn: $settings.showUpdateProgress)
             Toggle("Show search control", isOn: $settings.showSearchControl)
             Toggle("Show Installed Apps control", isOn: $settings.showInstalledAppsControl)
             Toggle("Show Copy Commands control", isOn: $settings.showCopyCommandsControl)
@@ -123,6 +131,11 @@ struct SettingsPane: View {
                 }
             }
             .pickerStyle(.menu)
+            // A result for the old service says nothing about the new one.
+            .onChange(of: settings.bulkLookupProvider) { _ in
+                connectionTestResult = nil
+                credentialStatus = ""
+            }
 
             Text("Your installed-app names and versions are sent only when you press Check All Apps.")
                 .font(Theme.Font.caption)
@@ -174,7 +187,20 @@ struct SettingsPane: View {
                     isSaved: hasCustomAIKey,
                     save: saveCustomAIKey
                 )
-                Text("Use an HTTPS service or a local endpoint such as http://localhost:11434/v1/chat/completions. Current web results require the chosen service or model to provide its own search capability.")
+                HStack(spacing: Theme.Space.inner) {
+                    Text("Presets:")
+                    ForEach(CustomAIPreset.all) { preset in
+                        Button(preset.name) {
+                            settings.customAIEndpoint = preset.endpoint
+                            settings.customAIModel = preset.model
+                        }
+                        .buttonStyle(.link)
+                    }
+                }
+                .font(Theme.Font.caption)
+                .foregroundStyle(.secondary)
+
+                Text("Any OpenAI-compatible service works: DeepSeek, Groq, OpenRouter, or a local Ollama at http://localhost:11434/v1/chat/completions. Web results depend on the chosen service or model providing its own search — models without it will answer \"unverified\" more often.")
                     .font(Theme.Font.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -193,11 +219,27 @@ struct SettingsPane: View {
                     settings.bulkLookupPrompt = UserSettings.defaultLookupPrompt
                 }
                 .controlSize(.small)
+
+                Button(isTestingConnection ? "Testing…" : "Test Connection") { testConnection() }
+                    .controlSize(.small)
+                    .disabled(isTestingConnection)
+
                 if !credentialStatus.isEmpty {
                     Text(credentialStatus)
                         .font(Theme.Font.caption)
                         .foregroundStyle(.secondary)
                 }
+            }
+
+            if let result = connectionTestResult {
+                HStack(alignment: .firstTextBaseline, spacing: Theme.Space.tight) {
+                    Image(systemName: result.succeeded ? "checkmark.circle.fill" : "xmark.circle.fill")
+                    Text(result.message)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                }
+                .font(Theme.Font.caption)
+                .foregroundStyle(result.succeeded ? Color.green : Color.orange)
             }
         }
     }
@@ -317,6 +359,96 @@ struct SettingsPane: View {
             } catch {
                 fileError = "Could not save the Anthropic key: \(error.localizedDescription)"
             }
+        }
+    }
+
+    /// The key field for the selected service, if it holds unsaved text.
+    ///
+    /// A typed-but-unsaved key is invisible to `testConnection`, which reads the
+    /// Keychain — so the button would silently test the *previous* key and
+    /// report a confusing 401. Save first, then test what was actually saved.
+    private func pendingKey() -> (value: String, credential: SecureCredentialStore.Credential)? {
+        let field: (String, SecureCredentialStore.Credential)
+        switch settings.bulkLookupProvider {
+        case .chatGPT: field = (openAIKey, .openAIAPIKey)
+        case .claude:  field = (anthropicKey, .anthropicAPIKey)
+        case .google:  field = (googleKey, .googleAPIKey)
+        case .custom:  field = (customAIKey, .customAIAPIKey)
+        }
+        let trimmed = field.0.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : (trimmed, field.1)
+    }
+
+    private func clearKeyField(for credential: SecureCredentialStore.Credential) {
+        switch credential {
+        case .openAIAPIKey: openAIKey = ""; hasOpenAIKey = true
+        case .anthropicAPIKey: anthropicKey = ""; hasAnthropicKey = true
+        case .googleAPIKey: googleKey = ""; hasGoogleKey = true
+        case .customAIAPIKey: customAIKey = ""; hasCustomAIKey = true
+        }
+    }
+
+    private func testConnection() {
+        isTestingConnection = true
+        connectionTestResult = nil
+        Task {
+            // Persist anything typed but not yet saved, so the test exercises
+            // the key the user is actually looking at rather than the previous
+            // one. The old value is kept so a failed test can put it back — an
+            // unsuccessful test must not cost the user a working credential.
+            let pending = pendingKey()
+            var previousKey: String?
+            if let pending {
+                previousKey = try? await SecureCredentialStore.shared.load(pending.credential)
+                do {
+                    try await SecureCredentialStore.shared.save(pending.value, for: pending.credential)
+                } catch {
+                    connectionTestResult = ConnectionTestResult(
+                        succeeded: false,
+                        message: "Could not save the key to the Keychain: \(error.localizedDescription)"
+                    )
+                    isTestingConnection = false
+                    return
+                }
+            }
+
+            /// Put the previous credential back after a failed test.
+            func rollback() async {
+                guard let pending else { return }
+                if let previousKey, !previousKey.isEmpty {
+                    try? await SecureCredentialStore.shared.save(previousKey, for: pending.credential)
+                } else {
+                    try? await SecureCredentialStore.shared.delete(pending.credential)
+                }
+            }
+
+            do {
+                let message = try await BulkAppLookup.testConnection(
+                    provider: settings.bulkLookupProvider,
+                    googleEngineID: settings.googleSearchEngineID,
+                    anthropicModel: settings.anthropicModel,
+                    customEndpoint: settings.customAIEndpoint,
+                    customModel: settings.customAIModel
+                )
+                // Only now is the new key proven good: keep it, and clear the
+                // field so it stops looking unsaved.
+                if let pending {
+                    clearKeyField(for: pending.credential)
+                    fileError = nil
+                    credentialStatus = "\(settings.bulkLookupProvider.title) key saved securely"
+                }
+                connectionTestResult = ConnectionTestResult(succeeded: true, message: message)
+            } catch {
+                await rollback()
+                // Rollback may have deleted a credential that had no prior
+                // value, so the "Saved in Keychain" placeholders need re-deriving.
+                await refreshCredentialStatus()
+                connectionTestResult = ConnectionTestResult(
+                    succeeded: false,
+                    message: error.localizedDescription
+                )
+            }
+            isTestingConnection = false
         }
     }
 

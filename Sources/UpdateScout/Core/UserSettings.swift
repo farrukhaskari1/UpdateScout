@@ -15,6 +15,7 @@ final class UserSettings: ObservableObject {
         static let showBadgeCount = "showBadgeCount"
         static let showSearchControl = "showSearchControl"
         static let showStatusCard = "showStatusCard"
+        static let showUpdateProgress = "showUpdateProgress"
         static let showInstalledAppsControl = "showInstalledAppsControl"
         static let showCopyCommandsControl = "showCopyCommandsControl"
         static let notifyOnNew = "notifyOnNew"
@@ -46,6 +47,12 @@ final class UserSettings: ObservableObject {
 
     @Published var showStatusCard: Bool {
         didSet { defaults.set(showStatusCard, forKey: Key.showStatusCard) }
+    }
+
+    /// Show the progress bar while updates run. On by default — an update that
+    /// gives no feedback looks like a hang.
+    @Published var showUpdateProgress: Bool {
+        didSet { defaults.set(showUpdateProgress, forKey: Key.showUpdateProgress) }
     }
 
     @Published var showInstalledAppsControl: Bool {
@@ -107,6 +114,7 @@ final class UserSettings: ObservableObject {
         showBadgeCount = defaults.object(forKey: Key.showBadgeCount) as? Bool ?? false
         showSearchControl = defaults.object(forKey: Key.showSearchControl) as? Bool ?? true
         showStatusCard = defaults.object(forKey: Key.showStatusCard) as? Bool ?? true
+        showUpdateProgress = defaults.object(forKey: Key.showUpdateProgress) as? Bool ?? true
         showInstalledAppsControl = defaults.object(forKey: Key.showInstalledAppsControl) as? Bool ?? true
         showCopyCommandsControl = defaults.object(forKey: Key.showCopyCommandsControl) as? Bool ?? true
         notifyOnNew = defaults.object(forKey: Key.notifyOnNew) as? Bool ?? false
@@ -129,6 +137,8 @@ final class UserSettings: ObservableObject {
     Find the latest stable macOS release for every installed app. Prefer the official vendor,
     official release notes, App Store listing, appcast, or official repository. Ignore beta,
     nightly, preview, and Windows-only releases. Never guess when no reliable version is found.
+    Search the internet to determine whether each listed app is current, and give the newer
+    build or release number when one exists.
     """
 
     func isEnabled(_ source: SourceKind) -> Bool {

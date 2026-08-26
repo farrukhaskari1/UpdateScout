@@ -29,13 +29,18 @@ struct ProviderParserTests {
         ])
     }
 
+    /// Mirrors the shape `brew info --json=v2 --cask --installed` actually emits:
+    /// the rename target is a dictionary *inside* the `app` array, not a key on
+    /// the artifact. An earlier fixture put it on the artifact, which let a
+    /// parser that couldn't read real Homebrew output pass.
     @Test func parsesExactApplicationArtifactsFromInstalledCasks() {
         let json = #"""
         {"casks":[
           {"token":"example","artifacts":[
-            {"app":["Example.app"],"target":"/Applications/Example Renamed.app"},
+            {"app":["Example.app",{"target":"/Applications/Example Renamed.app"}]},
             {"binary":["example"]}
           ]},
+          {"token":"plain","artifacts":[{"app":["Plain.app"]}]},
           {"token":"cli-only","artifacts":[{"binary":["tool"]}]}
         ]}
         """#.data(using: .utf8)!
@@ -43,8 +48,23 @@ struct ProviderParserTests {
         #expect(HomebrewProvider.installedCaskApps(from: json) ==
             HomebrewProvider.InstalledCaskApps(
                 paths: ["/Applications/Example Renamed.app"],
-                fileNames: ["Example.app"]
+                fileNames: ["Example.app", "Example Renamed.app", "Plain.app"]
             ))
+    }
+
+    /// A cask that carries `target` on the artifact itself still resolves.
+    @Test func parsesLegacyTargetOnArtifact() {
+        let json = #"""
+        {"casks":[
+          {"token":"legacy","artifacts":[
+            {"app":["Legacy.app"],"target":"/Applications/Legacy Renamed.app"}
+          ]}
+        ]}
+        """#.data(using: .utf8)!
+
+        let inventory = HomebrewProvider.installedCaskApps(from: json)
+        #expect(inventory.paths.contains("/Applications/Legacy Renamed.app"))
+        #expect(inventory.fileNames.contains("Legacy.app"))
     }
 
     @Test func parsesMacAppStoreArrows() throws {

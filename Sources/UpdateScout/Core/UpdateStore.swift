@@ -16,6 +16,9 @@ final class UpdateStore: ObservableObject {
     @Published private(set) var recoveryStates: [String: UpdateExecutionState] = [:]
     @Published private(set) var isUpdating = false
     @Published private(set) var updateProgressLabel = ""
+    /// Structured counterpart to `updateProgressLabel`, so the UI can draw a
+    /// determinate bar rather than only a line of text. Nil when idle.
+    @Published private(set) var updateProgress: UpdateProgress?
     @Published var lastScan: Date?
 
     /// Sources the user can toggle, and whether the backing tool exists.
@@ -33,6 +36,26 @@ final class UpdateStore: ObservableObject {
 
     let settings = UserSettings.shared
 
+    /// Inputs that cost real I/O to determine, resolved off the main actor and
+    /// handed to `allProviders` rather than computed inside it.
+    ///
+    /// `Shell.has` reaches `Shell.searchPath`, which synchronously runs
+    /// `zsh -lc` — sourcing the user's whole shell profile, up to a 20s timeout.
+    /// Reading it from a `@MainActor` computed property beachballed launch.
+    struct ProviderEnvironment: Sendable {
+        var masInstalled = false
+        var configuredGitHubIDs: Set<String> = []
+
+        static func resolve() -> ProviderEnvironment {
+            ProviderEnvironment(
+                masInstalled: Shell.has("mas"),
+                configuredGitHubIDs: GitHubAppProvider.configuredBundleIDs()
+            )
+        }
+    }
+
+    private var providerEnvironment = ProviderEnvironment()
+
     /// Every provider, in the order they're offered in Settings.
     private var allProviders: [any UpdateProvider] {
         [
@@ -42,9 +65,9 @@ final class UpdateStore: ObservableObject {
                 ignoredBundleIDs: settings.ignoredBundleIDs,
                 deduplicateHomebrewCasks: settings.isEnabled(.homebrewCask),
                 coveredGitHubBundleIDs: settings.isEnabled(.githubApp)
-                    ? GitHubAppProvider.configuredBundleIDs()
+                    ? providerEnvironment.configuredGitHubIDs
                     : [],
-                macAppStoreCoverageEnabled: settings.isEnabled(.macAppStore) && Shell.has("mas")
+                macAppStoreCoverageEnabled: settings.isEnabled(.macAppStore) && providerEnvironment.masInstalled
             ),
             GitHubAppProvider(ignoredBundleIDs: settings.ignoredBundleIDs),
             MacAppStoreProvider(),
@@ -95,8 +118,14 @@ final class UpdateStore: ObservableObject {
     /// Callable again after Settings creates a config file, so a source doesn't
     /// stay greyed out as "not installed" once its file exists.
     func probeAvailableSources() {
-        let providers = allProviders
         Task { [weak self] in
+            // Resolve the expensive environment first, off the main actor, then
+            // build the provider list from it back on the main actor.
+            let environment = await Shell.offPool { ProviderEnvironment.resolve() }
+            guard let self else { return }
+            await MainActor.run { self.providerEnvironment = environment }
+            let providers = await MainActor.run { self.allProviders }
+
             let options = await Shell.offPool { () -> [SourceOption] in
                 var seen = Set<SourceKind>()
                 var out: [SourceOption] = []
@@ -107,7 +136,7 @@ final class UpdateStore: ObservableObject {
                 out.insert(SourceOption(kind: .homebrewCask, installed: Shell.has("brew")), at: 2)
                 return out
             }
-            await MainActor.run { self?.availableSources = options }
+            await MainActor.run { self.availableSources = options }
         }
     }
 
@@ -172,16 +201,30 @@ final class UpdateStore: ObservableObject {
         isScanning = true
         progressLabel = "Preparing sources"
 
-        // The Homebrew provider is the only source of cask items, so it has to
-        // run whenever either of its two toggles is on.
-        let candidates = allProviders.filter { provider in
-            if provider.kind == .homebrewFormula {
-                return settings.isEnabled(.homebrewFormula) || settings.isEnabled(.homebrewCask)
-            }
-            return settings.isEnabled(provider.kind)
-        }
+        scanTask = Task { [weak self] in
+            guard let self else { return }
 
-        scanTask = Task { [weak self] in await self?.performScan(candidates) }
+            // Re-resolve off the main actor: `mas` may have been installed, or a
+            // GitHub pin added, since the last scan. Doing it here also means the
+            // first scan isn't stuck with the empty defaults.
+            let environment = await Shell.offPool { ProviderEnvironment.resolve() }
+            guard !Task.isCancelled else { return }
+
+            let candidates = await MainActor.run { () -> [any UpdateProvider] in
+                self.providerEnvironment = environment
+                // The Homebrew provider is the only source of cask items, so it
+                // has to run whenever either of its two toggles is on.
+                return self.allProviders.filter { provider in
+                    if provider.kind == .homebrewFormula {
+                        return self.settings.isEnabled(.homebrewFormula)
+                            || self.settings.isEnabled(.homebrewCask)
+                    }
+                    return self.settings.isEnabled(provider.kind)
+                }
+            }
+
+            await self.performScan(candidates)
+        }
     }
 
     private func performScan(_ candidates: [any UpdateProvider]) async {
@@ -365,6 +408,14 @@ final class UpdateStore: ObservableObject {
         isUpdating = true
         recoveryStates[issue.id] = .running
         updateProgressLabel = "Setting up \(issue.source.title)"
+        // Recovery is a one-command run, but it still pins the panel open and
+        // sets isUpdating — so it needs the bar too, or "Show progress while
+        // updating" is quietly false for half the cases.
+        updateProgress = UpdateProgress(
+            completed: 0,
+            total: 1,
+            currentName: issue.source.title
+        )
         updateTask = Task { [weak self] in
             await self?.performRecovery(issue, recovery: recovery, command: command)
         }
@@ -420,6 +471,7 @@ final class UpdateStore: ObservableObject {
     private func finishRecovery() {
         isUpdating = false
         updateProgressLabel = ""
+        updateProgress = nil
         updateTask = nil
     }
 
@@ -427,7 +479,13 @@ final class UpdateStore: ObservableObject {
         for (index, item) in runnable.enumerated() {
             guard !Task.isCancelled, let command = item.upgradeCommand else { break }
             updateStates[command] = .running
-            updateProgressLabel = "\(index + 1) of \(runnable.count) · \(item.name)"
+            let progress = UpdateProgress(
+                completed: index,
+                total: runnable.count,
+                currentName: item.name
+            )
+            updateProgress = progress
+            updateProgressLabel = progress.label
 
             let mayElevate = item.source == .macOSSystem || item.source == .macports
             let result = await Shell.runUpdateCommand(
@@ -467,6 +525,7 @@ final class UpdateStore: ObservableObject {
         }
         isUpdating = false
         updateProgressLabel = ""
+        updateProgress = nil
         updateTask = nil
     }
 

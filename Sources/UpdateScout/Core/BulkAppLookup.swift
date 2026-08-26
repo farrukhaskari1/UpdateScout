@@ -17,6 +17,45 @@ enum BulkLookupProvider: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+/// One-click endpoint + model pairs for the Custom AI provider.
+///
+/// Every entry speaks the OpenAI chat-completions shape, which is why one
+/// provider covers all of them — the key still lives in the Keychain, and the
+/// endpoint is just a settings field.
+struct CustomAIPreset: Identifiable, Sendable {
+    let name: String
+    let endpoint: String
+    let model: String
+
+    var id: String { name }
+
+    static let all: [CustomAIPreset] = [
+        // deepseek-chat / deepseek-reasoner were retired on 2026-07-24; the
+        // current IDs are deepseek-v4-flash and deepseek-v4-pro. Flash is the
+        // cheaper default — swap to -pro for stronger reasoning.
+        CustomAIPreset(
+            name: "DeepSeek",
+            endpoint: "https://api.deepseek.com/chat/completions",
+            model: "deepseek-v4-flash"
+        ),
+        CustomAIPreset(
+            name: "Groq",
+            endpoint: "https://api.groq.com/openai/v1/chat/completions",
+            model: "llama-3.3-70b-versatile"
+        ),
+        CustomAIPreset(
+            name: "OpenRouter",
+            endpoint: "https://openrouter.ai/api/v1/chat/completions",
+            model: "deepseek/deepseek-v4-flash"
+        ),
+        CustomAIPreset(
+            name: "Ollama",
+            endpoint: "http://localhost:11434/v1/chat/completions",
+            model: "llama3.1"
+        )
+    ]
+}
+
 struct AppLookupResult: Identifiable, Sendable {
     enum Status: String, Sendable {
         case updateAvailable
@@ -56,12 +95,12 @@ enum BulkAppLookup {
         switch provider {
         case .chatGPT:
             guard let key = try await SecureCredentialStore.shared.load(.openAIAPIKey), !key.isEmpty else {
-                throw LookupError.missingCredential("Add an OpenAI API key in Settings first.")
+                throw LookupError.missingCredential("ChatGPT is the selected service. Add an OpenAI API key in Settings, or switch Service to the one you configured.")
             }
             return try await checkWithChatGPT(apps: apps, prompt: prompt, apiKey: key)
         case .claude:
             guard let key = try await SecureCredentialStore.shared.load(.anthropicAPIKey), !key.isEmpty else {
-                throw LookupError.missingCredential("Add an Anthropic API key in Settings first.")
+                throw LookupError.missingCredential("Claude is the selected service. Add an Anthropic API key in Settings, or switch Service to the one you configured.")
             }
             let model = anthropicModel.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !model.isEmpty else {
@@ -72,7 +111,7 @@ enum BulkAppLookup {
             guard let key = try await SecureCredentialStore.shared.load(.googleAPIKey), !key.isEmpty,
                   !googleEngineID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             else {
-                throw LookupError.missingCredential("Add a Google API key and Search Engine ID in Settings first.")
+                throw LookupError.missingCredential("Google is the selected service. Add a Google API key and Search Engine ID in Settings, or switch Service to the one you configured.")
             }
             return try await checkWithGoogle(
                 apps: apps,
@@ -97,8 +136,121 @@ enum BulkAppLookup {
         }
     }
 
+    /// Round-trip one trivial request to prove the key, endpoint, and model all
+    /// work — before a real lookup spends tokens on 60 apps and fails on the
+    /// last chunk.
+    ///
+    /// Returns a short success description; throws `LookupError` otherwise, so
+    /// the caller can show the service's own message rather than a generic one.
+    static func testConnection(
+        provider: BulkLookupProvider,
+        googleEngineID: String,
+        anthropicModel: String,
+        customEndpoint: String,
+        customModel: String
+    ) async throws -> String {
+        switch provider {
+        case .chatGPT:
+            guard let key = try await SecureCredentialStore.shared.load(.openAIAPIKey), !key.isEmpty else {
+                throw LookupError.missingCredential("ChatGPT is the selected service. Add an OpenAI API key in Settings, or switch Service to the one you configured.")
+            }
+            // Exercise the same endpoint and model the real lookup uses. A key
+            // that can list models but has no access to gpt-5-mini would
+            // otherwise pass the test and fail the lookup.
+            var request = URLRequest(url: URL(string: "https://api.openai.com/v1/responses")!)
+            request.httpMethod = "POST"
+            request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: [
+                "model": "gpt-5-mini",
+                "store": false,
+                "input": "Reply with the single word: ok"
+            ] as [String: Any])
+            _ = try await responseData(for: request)
+            return "OpenAI reachable, gpt-5-mini responded."
+
+        case .claude:
+            guard let key = try await SecureCredentialStore.shared.load(.anthropicAPIKey), !key.isEmpty else {
+                throw LookupError.missingCredential("Claude is the selected service. Add an Anthropic API key in Settings, or switch Service to the one you configured.")
+            }
+            let model = anthropicModel.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !model.isEmpty else {
+                throw LookupError.missingCredential("Choose a Claude model in Settings first.")
+            }
+            var request = URLRequest(url: URL(string: "https://api.anthropic.com/v1/messages")!)
+            request.httpMethod = "POST"
+            request.setValue(key, forHTTPHeaderField: "x-api-key")
+            request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: [
+                "model": model,
+                "max_tokens": 16,
+                "messages": [["role": "user", "content": "Reply with the single word: ok"]]
+            ] as [String: Any])
+            _ = try await responseData(for: request)
+            return "Anthropic reachable, \(model) responded."
+
+        case .google:
+            guard let key = try await SecureCredentialStore.shared.load(.googleAPIKey), !key.isEmpty else {
+                throw LookupError.missingCredential("Google is the selected service. Add a Google API key in Settings, or switch Service to the one you configured.")
+            }
+            let engine = googleEngineID.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !engine.isEmpty else {
+                throw LookupError.missingCredential("Add a Google Search Engine ID in Settings first.")
+            }
+            var components = URLComponents(string: "https://customsearch.googleapis.com/customsearch/v1")!
+            components.queryItems = [
+                URLQueryItem(name: "key", value: key),
+                URLQueryItem(name: "cx", value: engine),
+                URLQueryItem(name: "num", value: "1"),
+                URLQueryItem(name: "q", value: "macOS release notes")
+            ]
+            _ = try await responseData(for: URLRequest(url: components.url!))
+            return "Google Custom Search reachable, key and engine accepted."
+
+        case .custom:
+            let endpoint = try validatedCustomEndpoint(customEndpoint)
+            let model = customModel.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !model.isEmpty else {
+                throw LookupError.missingCredential("Add the model name for your custom AI service in Settings first.")
+            }
+            let key = try await SecureCredentialStore.shared.load(.customAIAPIKey)
+            var request = URLRequest(url: endpoint)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            if let key, !key.isEmpty {
+                request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+            }
+            request.httpBody = try JSONSerialization.data(withJSONObject: [
+                "model": model,
+                "max_tokens": 16,
+                "messages": [["role": "user", "content": "Reply with the single word: ok"]]
+            ] as [String: Any])
+            let data = try await responseData(for: request)
+
+            // A 200 that isn't chat-completions shaped means the endpoint is
+            // live but wrong — usually a base URL without /chat/completions.
+            guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let choices = root["choices"] as? [[String: Any]],
+                  let message = choices.first?["message"] as? [String: Any],
+                  message["content"] is String
+            else {
+                throw LookupError.badResponse(
+                    "Connected, but the reply was not OpenAI chat-completions shaped. Check the URL ends in /chat/completions and the model name is right."
+                )
+            }
+            return "\(endpoint.host ?? "Service") reachable, \(model) responded."
+        }
+    }
+
+    /// A stable key for one app that is safe to send to a third party.
+    ///
+    /// Never the filesystem path: Spotlight discovery finds apps under `~`, so
+    /// a path would carry the user's account name off the machine — which the
+    /// confirmation dialog explicitly promises it does not.
     static func identity(for app: InstalledApp) -> String {
-        app.bundleID.isEmpty ? app.path : app.bundleID
+        guard app.bundleID.isEmpty else { return app.bundleID }
+        return URL(fileURLWithPath: app.path).lastPathComponent
     }
 
     private static func checkWithChatGPT(
@@ -287,11 +439,28 @@ enum BulkAppLookup {
         return """
         \(prompt)
 
-        Check every macOS app below. Use official vendor release notes, appcasts, stores, or repositories.
-        Search current sources. Never guess a version. Return one result for every supplied id.
+        Each app below is one this Mac could not identify an update mechanism for — no
+        Sparkle feed, no package manager, no App Store receipt. The user has to update
+        these by hand, so the useful answer is the current released version and where to
+        get it.
+
+        For every app: find the latest stable macOS release from the vendor's own release
+        notes, appcast, store listing, or source repository. Compare it against
+        installed_version and set status to updateAvailable, upToDate, or unverified.
+
+        Rules:
+        - Return exactly one result for every supplied id, even when unverified.
+        - Never guess. If you cannot find an authoritative version, use
+          latest_version: null and status "unverified" rather than inventing one.
+        - Prefer stable releases. Ignore betas, release candidates, and nightlies
+          unless the installed version is itself a prerelease.
+        - Match the vendor's own version format so the two can be compared.
+        - source_url must be the official download or release-notes page, so the user
+          can complete the update manually.
+        - Keep summary to one short sentence naming the evidence.
         \(jsonInstruction)
 
-        Installed apps:
+        Apps needing a manual check:
         \(inventoryJSON)
         """
     }
@@ -395,10 +564,73 @@ enum BulkAppLookup {
             throw LookupError.badResponse("The lookup service returned no HTTP response.")
         }
         guard (200..<300).contains(http.statusCode) else {
-            let message = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])
-                .flatMap { ($0["error"] as? [String: Any])?["message"] as? String }
-            throw LookupError.service(message ?? "Lookup failed with HTTP \(http.statusCode).")
+            throw LookupError.service(describe(status: http.statusCode, body: data))
         }
         return data
+    }
+
+    /// Turn a failed HTTP response into something worth reading.
+    ///
+    /// Services disagree on error shapes — OpenAI and DeepSeek nest under
+    /// `error.message`, some use a bare `message`, some return HTML or nothing
+    /// at all. Falling straight through to "HTTP 401" hides the one sentence
+    /// that would tell the user what to fix.
+    static func describe(status: Int, body: Data) -> String {
+        var detail: String?
+        // `type`/`code` distinguish failures that share a status code — most
+        // importantly 429, which OpenAI returns both for genuine rate limiting
+        // and for an exhausted quota. Those need opposite advice.
+        var kind: String?
+        if let root = try? JSONSerialization.jsonObject(with: body) as? [String: Any] {
+            if let error = root["error"] as? [String: Any] {
+                detail = error["message"] as? String
+                kind = (error["type"] as? String) ?? (error["code"] as? String)
+            }
+            if detail == nil, let flat = root["message"] as? String {
+                detail = flat
+            }
+            if detail == nil, let errorString = root["error"] as? String {
+                detail = errorString
+            }
+        }
+        if detail == nil {
+            let raw = String(decoding: body, as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            // A proxy or CDN error page is markup, not a message. Showing 200
+            // characters of HTML in a status label helps nobody.
+            if !raw.isEmpty, !raw.hasPrefix("<") {
+                let firstLine = raw.split(separator: "\n").first.map(String.init) ?? raw
+                detail = firstLine.count > 200 ? String(firstLine.prefix(200)) + "…" : firstLine
+            }
+        }
+
+        let hint: String
+        switch status {
+        case 401:
+            hint = " Check the API key is current — a revoked or regenerated key fails here, "
+                 + "and keys are per-service, so an OpenAI key won't work against DeepSeek."
+        case 402:
+            hint = " This usually means the account has no remaining credit."
+        case 403:
+            hint = " The key is valid but not permitted to use this model."
+        case 404:
+            hint = " Check the endpoint URL — it should end in /chat/completions for an "
+                 + "OpenAI-compatible service — and that the model name exists."
+        case 429:
+            // Quota exhaustion and rate limiting share this status but not the
+            // remedy: waiting fixes one and never fixes the other.
+            let quotaExhausted = kind == "insufficient_quota"
+                || (detail?.localizedCaseInsensitiveContains("quota") ?? false)
+                || (detail?.localizedCaseInsensitiveContains("billing") ?? false)
+            hint = quotaExhausted
+                ? " This is a billing problem, not a busy server — the account has no credit"
+                    + " left, so waiting will not help. Add credit, or switch Service to a"
+                    + " provider you still have quota with."
+                : " Too many requests in a short window. Wait a moment and try again."
+        default:
+            hint = ""
+        }
+
+        return "HTTP \(status).\(detail.map { " \($0)" } ?? "")\(hint)"
     }
 }

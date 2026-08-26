@@ -163,7 +163,12 @@ struct MenuHeader: View {
     }
 
     private var subhead: String {
-        if store.isUpdating, !store.updateProgressLabel.isEmpty { return store.updateProgressLabel }
+        // Suppressed when the progress bar is showing the same thing directly
+        // below — one statement of "3 of 7 · Raycast" is enough.
+        let barIsVisible = settings.showUpdateProgress && store.updateProgress != nil
+        if store.isUpdating, !store.updateProgressLabel.isEmpty, !barIsVisible {
+            return store.updateProgressLabel
+        }
         if store.isScanning, !store.progressLabel.isEmpty { return store.progressLabel }
 
         var pieces: [String] = []

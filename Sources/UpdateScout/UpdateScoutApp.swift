@@ -139,4 +139,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Notifications.requestAuthorization()
         }
     }
+
+    /// Flush preferences before we go.
+    ///
+    /// `UserDefaults` writes are coalesced and flushed on a timer, so a hard
+    /// termination — `pkill` during a reinstall, for instance — can lose the
+    /// last few changes. Losing the selected AI service silently resets it to
+    /// the default, which then reports "add an OpenAI API key" for a service
+    /// the user never chose.
+    func applicationWillTerminate(_ notification: Notification) {
+        UserDefaults.standard.synchronize()
+    }
 }

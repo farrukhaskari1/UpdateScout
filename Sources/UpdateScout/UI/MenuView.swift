@@ -28,6 +28,15 @@ struct MenuView: View {
             .environmentObject(store)
 
             Divider()
+
+            // Sits directly under the header so it stays visible while the list
+            // scrolls — an update running with no feedback reads as a hang.
+            if settings.showUpdateProgress, let progress = store.updateProgress {
+                UpdateProgressBar(progress: progress) { store.cancelUpdates() }
+                    .transition(.opacity)
+                Divider()
+            }
+
             content(groups)
 
             if let updatePrompt {
